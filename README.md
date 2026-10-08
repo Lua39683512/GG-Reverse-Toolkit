@@ -174,40 +174,47 @@ X
 生成特征
 
 运行 GameGuardian
-        ↓
-运行 Reverse-Toolkit
+        
+        ↓  
+运行 Reverse-Toolkit.lua
+
         ↓
 打开 GameGuardian 悬浮按钮
+
         ↓
-数值选择
+     数值选择
         ↓
-选择搜索结果 / 保存列表 / 手动输入地址
+选择搜索结果/保存列表/手动输入地址
+
         ↓
-特征
+       特征
         ↓
-设置
+       设置
         ↓
 选择数据类型及其它参数
-        ↓
-扫描
-        ↓
-生成特征文件
 
-对比特征
+        ↓
+       扫描
+        ↓
+    生成特征文件
+        ↓
+      对比特征
 
-运行 Reverse-Toolkit
+运行 Reverse-Toolkit.lua
+
         ↓
-对比
+       对比
         ↓
-选择文件1
+     选择文件1
         ↓
-选择文件2
+     选择文件2
         ↓
 设置输出文件名及保存位置
+
         ↓
-开始对比
+      开始对比
         ↓
-生成对比结果
+    生成对比结果
 
 运行方式
 
@@ -227,23 +234,16 @@ gg.isClickedUiButton()
 
 文件结构
 
-GG-Reverse-Toolkit/
-
-├── Reverse-Toolkit
-
-├── 下载.lua
-
-├── Changelog.md
-
-├── README.md
-
-├── 历史版本/
-
-└── 教程/
-
-    ├── mp4/
-    ├── txt/
-    └── 说明
+    GG-Reverse-Toolkit/
+    ├── Reverse-Toolkit
+    ├── 下载.lua
+    ├── Changelog.md
+    ├── README.md
+    ├── 历史版本/
+    └── 教程/
+        ├── mp4/
+        ├── txt/
+        └── 说明
 
 版本
 
@@ -272,10 +272,6 @@ GG-Reverse-Toolkit/
 
 开源项目
 
-项目地址：
+项目地址:https://github.com/Lua39683512/GG-Reverse-Toolkit
 
-https://github.com/Lua39683512/GG-Reverse-Toolkit
-
-作者：
-
-Lua39683512
+作者:Lua39683512
