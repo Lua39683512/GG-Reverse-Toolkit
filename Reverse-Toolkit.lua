@@ -1,8 +1,9 @@
 gg.showUiButton()--调用图片res/drawable/ic_ui_button_24dp.png
-local DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true}
+local DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true}--保存HS7的输入
 local format=1
 local Selected=nil
-local Config={distance=8,path="/sdcard/",name="特征",file="/sdcard/特征",format=1}
+local Config={distance=8,path="/sdcard/",name="特征",file="/sdcard/特征",format=1}--保存HS2的输入
+local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard"}--保存HS1的输入
 --====================================================
 function SM(title,data,isMain)--增加一个函数"SM"用于优化菜单
 local menu={}
@@ -70,7 +71,10 @@ address=tonumber(s,16)end
 if not address then gg.alert("格式错误")return end
 Selected={address=address}end
     function HS1()
-local a=gg.prompt({"文件1","文件2","输出文件名","输出文件保存位置"},{"/sdcard","/sdcard","对比结果","/sdcard"},{"file","file","text","path"})
+local a=gg.prompt(
+{"文件1","文件2","输出文件名","输出文件保存位置"},
+{CompareConfig.file1,CompareConfig.file2,CompareConfig.name,CompareConfig.path},
+{"file","file","text","path"})
 if not a then return end
 local file1=a[1]
 local file2=a[2]
@@ -80,6 +84,10 @@ if not file1 or file1==""then gg.alert("文件1不可为空")return end
 if not file2 or file2==""then gg.alert("文件2不可为空")return end
 if not name or name==""then gg.alert("文件名不可为空")return end
 if not path or path==""then gg.alert("保存位置不可为空")return end
+CompareConfig.file1=file1
+CompareConfig.file2=file2
+CompareConfig.name=name
+CompareConfig.path=path
 if path:sub(-1)~="/"then path=path.."/"end
 local f1=io.open(file1,"r")
 if not f1 then gg.alert("无法打开文件1:\n"..file1)return end
@@ -87,45 +95,72 @@ local f2=io.open(file2,"r")
 if not f2 then f1:close()gg.alert("无法打开文件2:\n"..file2)return end
 local list1={}
 local list2={}
-for line in f1:lines()do
-list1[#list1+1]=line end
-for line in f2:lines()do
-list2[#list2+1]=line end
-f1:close()
-f2:close()
-local function GetValue(line)
-local t={}
-local offset=line:match("A%[([^%]]+)%]")
-for s in line:gmatch("[^;%s]+")do
-if s:match("^[+-]?[%d,%.]+[DFEQWBX]$")or s:match("^[+-]?NaN[DFEQWBX]$")or s:match("^[+-]?Inf[DFEQWBX]$")then t[s]=true end end
-return t,offset end
+for line in f1:lines()do list1[#list1+1]=line end
+for line in f2:lines()do list2[#list2+1]=line end
+f1:close()f2:close()
+local order={"D","F","E","W","B","Q","X"}
+local validType={D=true,F=true,E=true,W=true,B=true,Q=true,X=true}
+local function NormalizeOffset(s)
+if not s then return nil end
+s=s:match("^%s*(.-)%s*$")
+local sign=1
+local first=s:sub(1,1)
+if first=="-"then sign=-1 s=s:sub(2)
+elseif first=="+"then s=s:sub(2)end
+if s:match("^0[xX]")then
+local n=tonumber(s:sub(3),16)
+if n then return sign*n end return nil end
+local n=tonumber(s)
+if n then return sign*n end return nil end
+local function GetValueToken(s)
+local typ=s:sub(-1)
+if not validType[typ]then return nil end
+local value=s:sub(1,-2):gsub(",","")
+local lower=value:lower()
+if lower=="nan"or lower=="+nan"or lower=="-nan"or lower=="inf"or lower=="+inf"or lower=="-inf"then return value..typ,typ end
+if value:match("^[+-]?%d+%.?%d*[eE][+-]?%d+$")or value:match("^[+-]?%d+%.?%d*$")or value:match("^[+-]?%d*%.%d+$")then return value..typ,typ end return nil end
+local function GetLineData(line)
+local rawOffset=line:match("A%[([^%]]+)%]")
+local offset=NormalizeOffset(rawOffset)
+local values={}
+local body=line:gsub("A%[[^%]]+%]","")--忽略每行开头的地址,只解析数值字段,避免地址末尾的D/F等被误认为数值类型
+body=body:match("^%s*%S+%s+(.+)$")or body
+for s in body:gmatch("[^;%s]+")do
+local token=GetValueToken(s)
+if token then values[token]=true end end return values,offset end
+local index2={}
+for _,line in ipairs(list2)do--先为文件2建立“偏移量->数值及类型集合”的索引,不依赖行号和排列顺序
+local values,offset=GetLineData(line)
+if offset~=nil then
+local target=index2[offset]
+if not target then target={}index2[offset]=target end
+for token in pairs(values)do target[token]=true end end end
 local result={}
 local count=0
-local max=math.min(#list1,#list2)
-for i=1,max do
-local a1,o1=GetValue(list1[i])
-local a2,o2=GetValue(list2[i])
-local same=false
-local order={"D","F","E","W","B","Q","X"}--在偏移量后面加上相同的数据类型
+for _,line in ipairs(list1)do
+local values1,offset=GetLineData(line)
+local values2=offset~=nil and index2[offset]or nil
+if values2 then
 local types={}
-if o1==o2 then
-for _,t in ipairs(order)do
-for v in pairs(a1)do
-if v:match("[DFEQWBX]$")==t and a2[v]then same=true types[#types+1]=t break end end end end
-if same then result[#result+1]=list1[i]..table.concat(types,",")count=count+1 end end
+for _,typ in ipairs(order)do
+for token in pairs(values1)do
+if token:sub(-1)==typ and values2[token]then types[#types+1]=typ break end end end
+if #types>0 then
+result[#result+1]=line..table.concat(types,",")
+count=count+1 end end end
 local file=path..name
-local f=io.open(file,"r")
-if f then f:close()
+local check=io.open(file,"r")
+if check then
+check:close()
 local i=1
 while true do
 local newName=name.."("..i..")"
 local newFile=path..newName
-local f2=io.open(newFile,"r")
-if f2 then f2:close()i=i+1 else file=newFile name=newName break end end end
+local f=io.open(newFile,"r")
+if f then f:close()i=i+1 else file=newFile break end end end
 local out=io.open(file,"w")
 if not out then gg.alert("创建文件失败:\n"..file)return end
-for _,line in ipairs(result)do
-out:write(line,"\n")end
+for _,line in ipairs(result)do out:write(line,"\n")end
 out:close()
 gg.alert("对比完成!\n".."文件1行数:"..#list1.."\n".."文件2行数:"..#list2.."\n".."保留:"..count.."行\n".."文件:"..file)end
     function Main1()
