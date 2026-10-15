@@ -30,6 +30,7 @@ SM("",{
 {"数值选择",Main2},
 {"对比",HS1},
 {"特征",Main1},
+{"更新日志",HS9},
 {"退出",HS0}
 },true)end
     function Main2()
@@ -263,6 +264,8 @@ if path:sub(-1)~="/"then path=path.."/"end
 return{distance=distance,path=path,name=name,file=path..name,format=format}end
 local c=FeatureConfig()
 if c then Config=c gg.alert("设置成功!\n"..c.file.."\n特征距离:≤"..c.distance.."\n偏移量进制:"..(c.format==1 and"10"or"16"))end end
+    function HS9()
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.0.7")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
