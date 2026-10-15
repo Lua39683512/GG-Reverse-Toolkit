@@ -2,7 +2,7 @@ gg.showUiButton()--调用图片res/drawable/ic_ui_button_24dp.png
 local DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true}--保存HS7的输入
 local format=1
 local Selected=nil
-local Config={distance=8,path="/sdcard/",name="特征",file="/sdcard/特征",format=1}--保存HS2的输入
+local Config={distance=8,path="/sdcard/",name="特征",file="/sdcard/特征",format=1,step4=true}--保存HS2的输入
 local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard"}--保存HS1的输入
 --====================================================
 function SM(title,data,isMain)--增加一个函数"SM"用于优化菜单
@@ -183,7 +183,8 @@ local address=Selected.address
 local distance=Config.distance
 local request={}
 local offsetList={}
-for offset=-distance,distance do
+local step=Config.step4 and 4 or 1
+for offset=-distance,distance,step do
 local base=#request
 for _,v in ipairs(types)do
 request[#request+1]={address=address+offset,flags=v[1]}end
@@ -219,7 +220,7 @@ if #line>0 then
 local offset
 if format==1 then offset=tostring(o.offset)else
 if o.offset<0 then offset="-0x"..string.format("%X",-o.offset)else offset="0x"..string.format("%X",o.offset)end end
-f:write(string.format("%X",address+o.offset),"\t",table.concat(line," ; "),"\tA[",offset,"]\n")
+f:write(string.format("%X",address+o.offset),"\t",table.concat(line,";  "),"\tA[",offset,"]\n")
 count=count+1 end end
 f:close()
 gg.alert("扫描完成!\n".."地址:"..string.format("%X",address).."\n".."扫描范围:±"..distance.."\n".."生成:"..count.."行\n".."文件:"..Config.file)end
@@ -250,22 +251,23 @@ format=f end
     function HS2()
 local function FeatureConfig()
 local a=gg.prompt(
-{"特征距离≤","特征文件保存位置","特征文件名称"},
-{Config.distance,Config.path,Config.name},
-{"","path","text"})
+{"特征距离≤","特征文件保存位置","特征文件名称","地址间隔4"},
+{Config.distance,Config.path,Config.name,Config.step4},
+{"","path","text","checkbox"})
 if not a then return end
 local distance=tonumber(a[1])
 local path=a[2]
 local name=a[3]
+local step4=a[4]
 if not distance or distance<0 then gg.alert("特征距离必须是不小于0的数字")return end
 if not path or path==""then gg.alert("保存位置不可为空")return end
 if not name or name==""then gg.alert("文件名不可为空")return end
 if path:sub(-1)~="/"then path=path.."/"end
-return{distance=distance,path=path,name=name,file=path..name,format=format}end
+return{distance=distance,path=path,name=name,file=path..name,format=format,step4=step4}end
 local c=FeatureConfig()
-if c then Config=c gg.alert("设置成功!\n"..c.file.."\n特征距离:≤"..c.distance.."\n偏移量进制:"..(c.format==1 and"10"or"16"))end end
+if c then Config=c gg.alert("设置成功!\n"..c.file.."\n特征距离:≤"..c.distance.."\n偏移量进制:"..(c.format==1 and"10"or"16").."\n地址间隔:"..(c.step4 and"4"or"1"))end end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.0.7")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.0.8")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
