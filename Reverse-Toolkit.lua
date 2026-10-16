@@ -2,8 +2,49 @@ gg.showUiButton()--调用图片res/drawable/ic_ui_button_24dp.png
 local DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true}--保存HS7的输入
 local format=1
 local Selected=nil
-local Config={distance=8,path="/sdcard/",name="特征",file="/sdcard/特征",format=1,step4=true}--保存HS2的输入
+local Config={distance=8,path="/sdcard",name="特征",file="/sdcard/特征",format=1,step4=true}--保存HS2的输入
 local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard"}--保存HS1的输入
+local ListConfig={showState=false,showValues=false,maxCount=10000}--保存HS10的输入
+local ListTypes={{gg.TYPE_DWORD,"D"},{gg.TYPE_FLOAT,"F"},{gg.TYPE_DOUBLE,"E"},{gg.TYPE_WORD,"W"},{gg.TYPE_BYTE,"B"},{gg.TYPE_QWORD,"Q"},{gg.TYPE_XOR,"X"}}
+------------------------------------------------------------------------------------------
+local function FormatListValue(value)
+if value==nil then return "?" end
+local s=tostring(value)
+local sign,integer,tail=s:match("^([+-]?)(%d+)(.*)$")
+if integer and tail:match("^[%.%dEe%+%-]*$")then
+integer=integer:reverse():gsub("(%d%d%d)","%1,"):reverse():gsub("^,","")
+s=sign..integer..tail end
+return s end
+local function MakeSelectedMap(items)
+local selected={}
+if type(items)~="table"then return selected end
+for _,v in ipairs(items)do
+if v.address~=nil then
+if v.flags~=nil then selected[tostring(v.address)..":"..tostring(v.flags)]=true
+else selected[tostring(v.address)]=true end end end
+return selected end
+local function IsListSelected(selected,v)
+if v.flags~=nil then return selected[tostring(v.address)..":"..tostring(v.flags)]==true end
+return selected[tostring(v.address)]==true end
+local function GetDetailedValues(items)
+local detailed={}
+local batchSize=300
+for first=1,#items,batchSize do
+local last=math.min(first+batchSize-1,#items)
+local request={}
+for i=first,last do
+for _,t in ipairs(ListTypes)do
+request[#request+1]={address=items[i].address,flags=t[1]}end end
+local values=gg.getValues(request)
+if type(values)~="table"then return nil,tostring(values)end
+for i=first,last do
+local line={}
+local base=(i-first)*#ListTypes
+for j,t in ipairs(ListTypes)do
+local v=values[base+j]
+line[#line+1]=FormatListValue(v and v.value)..t[2]end
+detailed[i]=table.concat(line,"; ")end end
+return detailed end
 --====================================================
 function SM(title,data,isMain)--增加一个函数"SM"用于优化菜单
 local menu={}
@@ -37,26 +78,56 @@ SM("",{
 SM("",{
 {"搜索列表",HS3},
 {"保存列表",HS4},
-{"地址",HS5}
+{"地址",HS5},
+{"设置",Main4}
 })end
     function HS3()
 local n=gg.getResultsCount()
 if n==0 then gg.alert("搜索列表为空")return end
-local r=gg.getResults(n)
+local limit=math.min(n,ListConfig.maxCount)
+local selected={}
+if ListConfig.showState then selected=MakeSelectedMap(gg.getSelectedResults())end
+local r=gg.getResults(limit)
+local ranges=gg.getValuesRange(r)
+if type(ranges)~="table"then ranges={}end
+local detailed
+if ListConfig.showValues then
+local err
+detailed,err=GetDetailedValues(r)
+if not detailed then gg.alert("读取详细数值失败:\n"..tostring(err))return end end
 local list={}
 for i,v in ipairs(r)do
-local m=gg.getValuesRange({v.address})
-list[i]=string.format("%X    %s    %s    %s",v.address,tostring(v.value),TypeName(v.flags),m[1]or"?")end
+local prefix=ListConfig.showState and(IsListSelected(selected,v)and"☑"or"☐")or""
+local value=ListConfig.showValues and detailed[i]or FormatListValue(v.value)
+local valueType=ListConfig.showValues and""or("    "..TypeName(v.flags))
+list[i]=prefix..string.format("%X    %s%s    %s",v.address,value,valueType,ranges[i]or"?")end
 local s=gg.choice(list,nil,"")
 if not s then return end
 Selected=r[s]end
     function HS4()
-local r=gg.getListItems()
-if #r==0 then gg.alert("保存列表为空")return end
+local selected={}
+if ListConfig.showState then selected=MakeSelectedMap(gg.getSelectedListItems())end
+local all=gg.getListItems()
+if type(all)~="table"or #all==0 then gg.alert("保存列表为空")return end
+local count=math.min(#all,ListConfig.maxCount)
+local r={}
+for i=1,count do r[i]=all[i]end
+local ranges=gg.getValuesRange(r)
+if type(ranges)~="table"then ranges={}end
+local detailed
+if ListConfig.showValues then
+local err
+detailed,err=GetDetailedValues(r)
+if not detailed then gg.alert("读取详细数值失败:\n"..tostring(err))return end end
 local list={}
 for i,v in ipairs(r)do
-local m=gg.getValuesRange({v.address})
-list[i]=string.format("%s    %X    %s    %s    %s",v.name or"",v.address,tostring(v.value),TypeName(v.flags),m[1]or"?")end
+local prefix=""
+if ListConfig.showState then
+prefix=(IsListSelected(selected,v)and"☑"or"☐")..tostring(v.freeze==true).."  "end
+local namePrefix=(v.name and v.name~="")and(v.name.."    ")or""
+local value=ListConfig.showValues and detailed[i]or FormatListValue(v.value)
+local valueType=ListConfig.showValues and""or("    "..TypeName(v.flags))
+list[i]=prefix..namePrefix..string.format("%X    %s%s    %s",v.address,value,valueType,ranges[i]or"?")end
 local s=gg.choice(list,nil,"")
 if not s then return end
 Selected=r[s]end
@@ -71,6 +142,21 @@ local s=a[1]:gsub("^0[xX]","")
 address=tonumber(s,16)end
 if not address then gg.alert("格式错误")return end
 Selected={address=address}end
+    function Main4()
+SM("",{
+{"列表显示",HS10}
+})end
+     function HS10()
+local a=gg.prompt(
+{"显示勾选与冻结状态","数值详细显示","列表读取数量≤"},
+{ListConfig.showState,ListConfig.showValues,tostring(ListConfig.maxCount)},
+{"checkbox","checkbox","number"})
+if not a then return end
+local maxCount=tonumber(a[3])
+if not maxCount or maxCount<1 or maxCount%1~=0 then gg.alert("最多显示数量必须是大于0的整数")return end
+ListConfig.showState=a[1]
+ListConfig.showValues=a[2]
+ListConfig.maxCount=maxCount end
     function HS1()
 local a=gg.prompt(
 {"文件1","文件2","输出文件名","输出文件保存位置"},
@@ -267,7 +353,7 @@ return{distance=distance,path=path,name=name,file=path..name,format=format,step4
 local c=FeatureConfig()
 if c then Config=c gg.alert("设置成功!\n"..c.file.."\n特征距离:≤"..c.distance.."\n偏移量进制:"..(c.format==1 and"10"or"16").."\n地址间隔:"..(c.step4 and"4"or"1"))end end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.0.9")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.0")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
