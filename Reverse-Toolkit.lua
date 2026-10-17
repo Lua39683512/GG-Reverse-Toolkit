@@ -2,13 +2,13 @@ gg.showUiButton()--调用图片res/drawable/ic_ui_button_24dp.png
 local DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true}--保存HS7的输入
 local format=1
 local Selected=nil
-local Config={distance=8,path="/sdcard",name="特征",file="/sdcard/特征",format=1,step4=true}--保存HS2的输入
+local Config={distance=8,path="/sdcard/",name="特征",file="/sdcard/特征",format=1,step4=true}--保存HS2的输入
 local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard"}--保存HS1的输入
 local ListConfig={showState=false,showValues=false,maxCount=10000}--保存HS10的输入
 local ListTypes={{gg.TYPE_DWORD,"D"},{gg.TYPE_FLOAT,"F"},{gg.TYPE_DOUBLE,"E"},{gg.TYPE_WORD,"W"},{gg.TYPE_BYTE,"B"},{gg.TYPE_QWORD,"Q"},{gg.TYPE_XOR,"X"}}
 ------------------------------------------------------------------------------------------
 local function FormatListValue(value)
-if value==nil then return "?" end
+if value==nil then return"?"end
 local s=tostring(value)
 local sign,integer,tail=s:match("^([+-]?)(%d+)(.*)$")
 if integer and tail:match("^[%.%dEe%+%-]*$")then
@@ -180,11 +180,6 @@ local f1=io.open(file1,"r")
 if not f1 then gg.alert("无法打开文件1:\n"..file1)return end
 local f2=io.open(file2,"r")
 if not f2 then f1:close()gg.alert("无法打开文件2:\n"..file2)return end
-local list1={}
-local list2={}
-for line in f1:lines()do list1[#list1+1]=line end
-for line in f2:lines()do list2[#list2+1]=line end
-f1:close()f2:close()
 local order={"D","F","E","W","B","Q","X"}
 local validType={D=true,F=true,E=true,W=true,B=true,Q=true,X=true}
 local function NormalizeOffset(s)
@@ -192,8 +187,7 @@ if not s then return nil end
 s=s:match("^%s*(.-)%s*$")
 local sign=1
 local first=s:sub(1,1)
-if first=="-"then sign=-1 s=s:sub(2)
-elseif first=="+"then s=s:sub(2)end
+if first=="-"then sign=-1 s=s:sub(2)elseif first=="+"then s=s:sub(2)end
 if s:match("^0[xX]")then
 local n=tonumber(s:sub(3),16)
 if n then return sign*n end return nil end
@@ -210,21 +204,38 @@ local function GetLineData(line)
 local rawOffset=line:match("A%[([^%]]+)%]")
 local offset=NormalizeOffset(rawOffset)
 local values={}
-local body=line:gsub("A%[[^%]]+%]","")--忽略每行开头的地址,只解析数值字段,避免地址末尾的D/F等被误认为数值类型
+local body=line:gsub("A%[[^%]]+%]","")
 body=body:match("^%s*%S+%s+(.+)$")or body
 for s in body:gmatch("[^;%s]+")do
 local token=GetValueToken(s)
-if token then values[token]=true end end return values,offset end
-local index2={}
-for _,line in ipairs(list2)do--先为文件2建立“偏移量->数值及类型集合”的索引,不依赖行号和排列顺序
+if token then values[token]=true end end
+return values,offset end
+local index2={}--逐行读取文件2只保留偏移量和对应的数值索引
+local count2=0
+for line in f2:lines()do
+count2=count2+1
 local values,offset=GetLineData(line)
 if offset~=nil then
 local target=index2[offset]
 if not target then target={}index2[offset]=target end
-for token in pairs(values)do target[token]=true end end end
-local result={}
+for token in pairs(values)do
+target[token]=true end end end
+f2:close()
+local file=path..name--生成不重名的输出文件
+local check=io.open(file,"r")
+if check then
+check:close()
+local i=1
+while true do
+local newFile=path..name.."("..i..")"
+local f=io.open(newFile,"r")
+if f then f:close()i=i+1 else file=newFile break end end end
+local out=io.open(file,"w")
+if not out then f1:close()gg.alert("创建文件失败:\n"..file)return end
+local count1=0--逐行读取文件1匹配成功后立即写入输出文件
 local count=0
-for _,line in ipairs(list1)do
+for line in f1:lines()do
+count1=count1+1
 local values1,offset=GetLineData(line)
 local values2=offset~=nil and index2[offset]or nil
 if values2 then
@@ -232,24 +243,9 @@ local types={}
 for _,typ in ipairs(order)do
 for token in pairs(values1)do
 if token:sub(-1)==typ and values2[token]then types[#types+1]=typ break end end end
-if #types>0 then
-result[#result+1]=line..table.concat(types,",")
-count=count+1 end end end
-local file=path..name
-local check=io.open(file,"r")
-if check then
-check:close()
-local i=1
-while true do
-local newName=name.."("..i..")"
-local newFile=path..newName
-local f=io.open(newFile,"r")
-if f then f:close()i=i+1 else file=newFile break end end end
-local out=io.open(file,"w")
-if not out then gg.alert("创建文件失败:\n"..file)return end
-for _,line in ipairs(result)do out:write(line,"\n")end
-out:close()
-gg.alert("对比完成!\n".."文件1行数:"..#list1.."\n".."文件2行数:"..#list2.."\n".."保留:"..count.."行\n".."文件:"..file)end
+if #types>0 then out:write(line,table.concat(types,","),"\n")count=count+1 end end end
+f1:close()out:close()
+gg.alert("对比完成!\n".."文件1行数:"..count1.."\n".."文件2行数:"..count2.."\n保留:"..count.."行\n".."文件:"..file)end
     function Main1()
 SM("",{
 {"扫描",HS8},
@@ -270,7 +266,8 @@ local distance=Config.distance
 local request={}
 local offsetList={}
 local step=Config.step4 and 4 or 1
-for offset=-distance,distance,step do
+local maxOffset=Config.step4 and math.floor(distance/4)*4 or distance
+for offset=-maxOffset,maxOffset,step do
 local base=#request
 for _,v in ipairs(types)do
 request[#request+1]={address=address+offset,flags=v[1]}end
@@ -304,7 +301,7 @@ local r=result[pos+i]
 if r and r.address==address+o.offset then line[#line+1]=FormatValue(r.value)..v[2]end end
 if #line>0 then
 local offset
-if format==1 then offset=tostring(o.offset)else
+if format==1 then offset=string.format("%.0f",o.offset)else
 if o.offset<0 then offset="-0x"..string.format("%X",-o.offset)else offset="0x"..string.format("%X",o.offset)end end
 f:write(string.format("%X",address+o.offset),"    ",table.concat(line,"  ;  "),"    A[",offset,"]\n")
 count=count+1 end end
@@ -345,7 +342,7 @@ local distance=tonumber(a[1])
 local path=a[2]
 local name=a[3]
 local step4=a[4]
-if not distance or distance<0 then gg.alert("特征距离必须是不小于0的数字")return end
+if not distance or distance<0 or distance%1~=0 then gg.alert("特征距离必须是不小于0的整数")return end
 if not path or path==""then gg.alert("保存位置不可为空")return end
 if not name or name==""then gg.alert("文件名不可为空")return end
 if path:sub(-1)~="/"then path=path.."/"end
@@ -353,7 +350,7 @@ return{distance=distance,path=path,name=name,file=path..name,format=format,step4
 local c=FeatureConfig()
 if c then Config=c gg.alert("设置成功!\n"..c.file.."\n特征距离:≤"..c.distance.."\n偏移量进制:"..(c.format==1 and"10"or"16").."\n地址间隔:"..(c.step4 and"4"or"1"))end end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.0")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.1")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
