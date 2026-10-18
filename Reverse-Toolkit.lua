@@ -1,6 +1,7 @@
 gg.showUiButton()--调用图片res/drawable/ic_ui_button_24dp.png
 local DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true}--保存HS7的输入
 local format=1
+local addressFormat=1
 local Selected=nil
 local Config={distance=8,path="/sdcard/",name="特征",file="/sdcard/特征",format=1,step4=true}--保存HS2的输入
 local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard"}--保存HS1的输入
@@ -51,7 +52,7 @@ local menu={}
 for i,v in ipairs(data)do
 menu[i]=v[1]end
 if not isMain then menu[#menu+1]="回到主页"end--除了末尾有"true"以外的所有菜单末尾添加回到主页这个功能
-local s=gg.choice(menu,nil,title)
+local s=gg.choice(menu,"",title)
 if s then
 if s<=#data then data[s][2]()else Main0()end end end--点击回到主页这个功能后回到Main0()
 ------------------------------------------------------------------------------------------
@@ -134,17 +135,16 @@ Selected=r[s]end
     function HS5()
 local a=gg.prompt({""},{},{""})
 if not a then return end
-local b=gg.choice({10,16},"","进制")
-if not b then return end
 local address
-if b==1 then address=tonumber(a[1],10)else
+if addressFormat==1 then address=tonumber(a[1],10)else
 local s=a[1]:gsub("^0[xX]","")
 address=tonumber(s,16)end
 if not address then gg.alert("格式错误")return end
 Selected={address=address}end
     function Main4()
 SM("",{
-{"列表显示",HS10}
+{"列表",HS10},
+{"地址选择进制",HS11}
 })end
      function HS10()
 local a=gg.prompt(
@@ -157,6 +157,10 @@ if not maxCount or maxCount<1 or maxCount%1~=0 then gg.alert("最多显示数量
 ListConfig.showState=a[1]
 ListConfig.showValues=a[2]
 ListConfig.maxCount=maxCount end
+    function HS11()
+local a=gg.choice({10,16},addressFormat,"")
+if not a then return end
+addressFormat=a end
     function HS1()
 local a=gg.prompt(
 {"文件1","文件2","输出文件名","输出文件保存位置"},
@@ -350,7 +354,7 @@ return{distance=distance,path=path,name=name,file=path..name,format=format,step4
 local c=FeatureConfig()
 if c then Config=c gg.alert("设置成功!\n"..c.file.."\n特征距离:≤"..c.distance.."\n偏移量进制:"..(c.format==1 and"10"or"16").."\n地址间隔:"..(c.step4 and"4"or"1"))end end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.1")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.2")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
