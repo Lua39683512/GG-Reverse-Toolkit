@@ -9,3 +9,11 @@
 ### 对比特征
 对比选中的两个特征文件,把有效的特征写入到对比文件
 ## 下载教程
+方法1
+1. 下载`Reverse-Toolkit.lua`
+2. 使用GameGuardian执行
+方法2
+1. 下载`下载.lua`
+2. 使用GameGuardian执行
+3. 找到脚本下载的文件
+4. 使用GameGuardian执行
