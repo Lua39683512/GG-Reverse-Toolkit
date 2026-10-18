@@ -17,3 +17,14 @@
 2. 使用GameGuardian执行
 3. 找到脚本下载的文件
 4. 使用GameGuardian执行
+
+## 注意事项
+- 本工具需要 GameGuardian Lua 环境。
+- 不同 GameGuardian 版本或修改版可能存在兼容性差异。
+- 手动输入地址时，请确认地址及进制选择正确。
+- 特征距离越大，需要读取的数据越多。
+- 生成文件时，如果目标文件已经存在，工具会自动使用新的文件名。
+
+开源项目
+
+项目地址:https://github.com/Lua39683512/GG-Reverse-Toolkit
