@@ -1,4 +1,5 @@
 gg.showUiButton()--调用图片res/drawable/ic_ui_button_24dp.png
+local ListTypes={{gg.TYPE_DWORD,"D"},{gg.TYPE_FLOAT,"F"},{gg.TYPE_DOUBLE,"E"},{gg.TYPE_WORD,"W"},{gg.TYPE_BYTE,"B"},{gg.TYPE_QWORD,"Q"},{gg.TYPE_XOR,"X"}}
 local DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true}--保存HS7的输入
 local format=1
 local addressFormat=1
@@ -7,8 +8,7 @@ local Config={distance=8,path="/sdcard/",name="特征",file="/sdcard/特征",for
 local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard"}--保存HS1的输入
 local ListConfig={showState=false,showValues=false,maxCount=10000}--保存HS10的输入
 local noComma=true
-local ListTypes={{gg.TYPE_DWORD,"D"},{gg.TYPE_FLOAT,"F"},{gg.TYPE_DOUBLE,"E"},{gg.TYPE_WORD,"W"},{gg.TYPE_BYTE,"B"},{gg.TYPE_QWORD,"Q"},{gg.TYPE_XOR,"X"}}
-local FilterConfig={searchValue="",conditions="",replace=true}--保存HS13的输入
+local FilterConfig={searchValue="",conditions="",replace=true,floatThreshold=0.001,useF=true,useE=true}--保存HS13的输入
 ------------------------------------------------------------------------------------------
 local function FormatListValue(value)
 if value==nil then return"?"end
@@ -46,8 +46,7 @@ local base=(i-first)*#ListTypes
 for j,t in ipairs(ListTypes)do
 local v=values[base+j]
 line[#line+1]=FormatListValue(v and v.value)..t[2]end
-detailed[i]=table.concat(line,"; ")end end
-return detailed end
+detailed[i]=table.concat(line,"; ")end end return detailed end
 --====================================================
 function SM(title,data,isMain)--增加一个函数"SM"用于优化菜单
 local menu={}
@@ -105,8 +104,7 @@ local value=ListConfig.showValues and detailed[i]or FormatListValue(v.value)
 local valueType=ListConfig.showValues and""or("    "..TypeName(v.flags))
 list[i]=prefix..string.format("%X    %s%s    %s",v.address,value,valueType,ranges[i]or"?")end
 local s=gg.choice(list,nil,"")
-if not s then return end
-Selected=r[s]end
+if not s then return end Selected=r[s]end
     function HS4()
 local selected={}
 if ListConfig.showState then selected=MakeSelectedMap(gg.getSelectedListItems())end
@@ -152,7 +150,7 @@ SM("",{
 local a=gg.prompt(
 {"显示勾选与冻结状态","数值详细显示","列表读取数量≤"},
 {ListConfig.showState,ListConfig.showValues,tostring(ListConfig.maxCount)},
-{"checkbox","checkbox","number"})
+{"checkbox","checkbox",""})
 if not a then return end
 local maxCount=tonumber(a[3])
 if not maxCount or maxCount<1 or maxCount%1~=0 then gg.alert("最多显示数量必须是大于0的整数")return end
@@ -161,8 +159,7 @@ ListConfig.showValues=a[2]
 ListConfig.maxCount=maxCount end
     function HS11()
 local a=gg.choice({10,16},addressFormat,"")
-if not a then return end
-addressFormat=a end
+if not a then return end addressFormat=a end
     function HS1()
 local a=gg.prompt(
 {"文件1","文件2","输出文件名","输出文件保存位置"},
@@ -317,189 +314,88 @@ f:close()
 gg.alert("扫描完成!\n".."地址:"..string.format("%X",address).."\n".."扫描范围:±"..distance.."\n".."生成:"..count.."行\n".."文件:"..Config.file)end
     function HS13()
 local a=gg.prompt(
-{"搜索值(数值+类型,例如:1D)","过滤条件(偏移量+数据类型+数值;偏移量+数据类型+数值,例如:-4F5;0x4Q7)","将符合条件的结果替换搜索结果"},
-{FilterConfig.searchValue,FilterConfig.conditions,FilterConfig.replace},
-{"","","checkbox"})
+{"搜索值(数值+类型,例如:1D)","过滤条件(偏移量+数据类型+数值;偏移量+数据类型+数值,例如:-4F5;0x4Q7)","将符合条件的结果替换搜索结果","浮点误差阈值","F误差","E误差"},
+{FilterConfig.searchValue,FilterConfig.conditions,FilterConfig.replace,FilterConfig.floatThreshold,FilterConfig.useF,FilterConfig.useE},
+{"","","checkbox","","checkbox","checkbox"})
 if not a then return end
 FilterConfig.searchValue=a[1]
 FilterConfig.conditions=a[2]
 FilterConfig.replace=a[3]
-local TypeMap={
-D=gg.TYPE_DWORD,
-F=gg.TYPE_FLOAT,
-E=gg.TYPE_DOUBLE,
-Q=gg.TYPE_QWORD,
-W=gg.TYPE_WORD,
-B=gg.TYPE_BYTE,
-X=gg.TYPE_XOR
-}
-
+FilterConfig.floatThreshold=tonumber(a[4])or 0.001
+FilterConfig.useF=a[5]
+FilterConfig.useE=a[6]
+local TypeMap={D=gg.TYPE_DWORD,F=gg.TYPE_FLOAT,E=gg.TYPE_DOUBLE,Q=gg.TYPE_QWORD,W=gg.TYPE_WORD,B=gg.TYPE_BYTE,X=gg.TYPE_XOR}
 local function Trim(s)
-return tostring(s or ""):match("^%s*(.-)%s*$")
-end
-
--- 解析数值+数据类型，例如1D、5F、7Q
-local function ParseTypedValue(s)
+return tostring(s or""):match("^%s*(.-)%s*$")end
+local function ParseTypedValue(s)--解析数值+数据类型
 s=Trim(s)
 local typ=s:sub(-1):upper()
 local flag=TypeMap[typ]
 if not flag then return nil end
 local value=s:sub(1,-2):gsub("%s",""):gsub(",","")
 local number=tonumber(value)
-if not number then return nil end
-return value,flag,number,typ
-end
-
--- 解析偏移量，支持-4、4、0x4、-0x4
-local function ParseOffset(s)
+if not number then return nil end return value,flag,number,typ end
+local function ParseOffset(s)--解析偏移量,支持正负数10和16进制
 s=Trim(s):gsub("%s","")
 local sign=1
 local first=s:sub(1,1)
-if first=="-"then
-sign=-1
-s=s:sub(2)
-elseif first=="+"then
-s=s:sub(2)
-end
+if first=="-"then sign=-1 s=s:sub(2)elseif first=="+"then s=s:sub(2)end
 local n
-if s:match("^0[xX]")then
-n=tonumber(s:sub(3),16)
-else
-n=tonumber(s)
-end
-if not n or n%1~=0 then return nil end
-return sign*n
-end
-
+if s:match("^0[xX]")then n=tonumber(s:sub(3),16)else n=tonumber(s)end
+if not n or n%1~=0 then return nil end return sign*n end
 local searchValue,searchFlag=ParseTypedValue(a[1])
-if not searchValue then
-gg.alert("搜索值格式错误，请使用1D、5F等格式")
-return end
-
-if not a[2] or Trim(a[2])==""then
-gg.alert("过滤条件不可为空")
-return end
-
--- 解析过滤条件
-local conditions={}
+if not searchValue then gg.alert("搜索值格式错误,请使用5F等格式")return end
+if not a[2] or Trim(a[2])==""then gg.alert("过滤条件不可为空")return end
+local conditions={}--解析过滤条件
 for part in (a[2]..";"):gmatch("(.-);")do
 if Trim(part)~=""then
-local offsetText,flagText,valueText=
-part:match("^%s*([+-]?[%w]+)([DFEWBQX])%s*(.-)%s*$")
-if not offsetText or not valueText or Trim(valueText)==""then
-gg.alert("过滤条件格式错误：\n"..part)
-return end
+local offsetText,flagText,valueText=part:match("^%s*([+-]?[%w]+)([DFEWBQX])%s*(.-)%s*$")
+if not offsetText or not valueText or Trim(valueText)==""then gg.alert("过滤条件格式错误：\n"..part)return end
 local typedText=Trim(valueText)..flagText
-
 local offset=ParseOffset(offsetText)
-if offset==nil then
-gg.alert("偏移量格式错误：\n"..offsetText)
-return end
-
+if offset==nil then gg.alert("偏移量格式错误:\n"..offsetText)return end
 local value,flag,target,typ=ParseTypedValue(typedText)
-if not value then
-gg.alert("过滤数值格式错误：\n"..typedText)
-return end
-
-conditions[#conditions+1]={
-offset=offset,
-flag=flag,
-target=target,
-typ=typ
-}
-end
-end
-
-if #conditions==0 then
-gg.alert("至少需要1个过滤条件")
-return end
-
--- 搜索指定数值
-gg.clearResults()
-gg.searchNumber(searchValue,searchFlag)
-
+if not value then gg.alert("过滤数值格式错误:\n"..typedText)return end
+conditions[#conditions+1]={offset=offset,flag=flag,target=target,typ=typ}end end
+if #conditions==0 then gg.alert("至少需要1个过滤条件")return end
+gg.clearResults()gg.searchNumber(searchValue,searchFlag)--搜索指定数值
 local total=gg.getResultsCount()
-if total==0 then
-gg.alert("没有搜索到结果")
-return end
-
+if total==0 then gg.alert("没有搜索到结果")return end
 local batchSize=519000
 local found=0
 local filteredResults=a[3]and{}or nil
-
--- 分批读取搜索结果
-for skip=0,total-1,batchSize do
+for skip=0,total-1,batchSize do--分批读取搜索结果
 local count=math.min(batchSize,total-skip)
 local current=gg.getResults(count,skip)
-
-if type(current)~="table"or#current~=count then
-gg.alert("读取搜索结果失败\n位置:"..skip)
-return end
-
--- 对当前批次逐条件筛选
-for _,cond in ipairs(conditions)do
+if type(current)~="table"or#current~=count then gg.alert("读取搜索结果失败\n位置:"..skip)return end
+for _,cond in ipairs(conditions)do--对当前批次逐条件筛选
 if #current==0 then break end
-
 local request={}
 for i=1,#current do
-request[i]={
-address=current[i].address+cond.offset,
-flags=cond.flag
-}
-end
-
+request[i]={address=current[i].address+cond.offset,flags=cond.flag}end
 local ok,read=pcall(gg.getValues,request)
-if not ok or type(read)~="table"or#read~=#current then
-gg.alert("读取过滤数值失败\n偏移量:"..cond.offset)
-return end
-
+if not ok or type(read)~="table"or#read~=#current then gg.alert("读取过滤数值失败\n偏移量:"..cond.offset)return end
 local pass={}
 local pc=0
-
 for i=1,#current do
-local actual=read[i]and tonumber(read[i].value)
+local actual=read[i] and tonumber(read[i].value)
 local matched=false
-
 if actual~=nil then
-if cond.typ=="F"then
-matched=actual==actual and math.abs(actual-cond.target)<0.001
-else
-matched=actual==cond.target
-end
-end
-
-if matched then
-pc=pc+1
-pass[pc]=current[i]
-end
-end
-
-current=pass
-end
-
--- 累计匹配数量
-found=found+#current
-
--- 只有勾选替换时才保存匹配结果
-if filteredResults then
+if cond.typ=="F"then--浮点数误差
+if FilterConfig.useF then matched=actual==actual and math.abs(actual-cond.target)<FilterConfig.floatThreshold else matched=actual==actual end
+elseif cond.typ=="E"then
+if FilterConfig.useE then matched=actual==actual and math.abs(actual-cond.target)<FilterConfig.floatThreshold else matched=actual==actual end else matched=actual==cond.target end
+if matched then pc=pc+1 pass[pc]=current[i]end end end
+current=pass end
+found=found+#current--累计匹配数量
+if filteredResults then--只有勾选替换时才保存匹配结果
 for i=1,#current do
-filteredResults[#filteredResults+1]=current[i]
-end
-end
-end
-
--- 复选框决定是否替换搜索结果
-if a[3]then
-gg.clearResults()
+filteredResults[#filteredResults+1]=current[i]end end end
+if a[3]then gg.clearResults()--a[3]决定是否替换搜索结果
 if #filteredResults>0 then
 local ok,result=pcall(gg.loadResults,filteredResults)
-if not ok or result==false or type(result)=="string"then
-gg.alert("加载筛选结果失败")
-return end
-end
-end
-gg.alert("找到"..found.."个")
-end
+if not ok or result==false or type(result)=="string"then gg.alert("加载筛选结果失败")return end end end
+if not a[3]then gg.alert("找到"..found.."个")end end--若a[3]为true则不gg.alert()
     function Main3()
 SM("",{
 {"数据类型",HS7},
@@ -523,8 +419,7 @@ DataType.Q=a[6]
 DataType.X=a[7]end
     function HS6()
 local f=gg.choice({10,16},format,"")
-if not f then return end
-format=f end
+if not f then return end format=f end
     function HS12()
 local a=gg.prompt(
 {"数值不添加千位分隔符"},
@@ -551,7 +446,7 @@ return{distance=distance,path=path,name=name,file=path..name,format=format,step4
 local c=FeatureConfig()
 if c then Config=c gg.alert("设置成功!\n"..c.file.."\n特征距离:≤"..c.distance.."\n偏移量进制:"..(c.format==1 and"10"or"16").."\n地址间隔:"..(c.step4 and"4"or"1"))end end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.4")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.5")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
