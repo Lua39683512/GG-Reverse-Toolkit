@@ -12,6 +12,7 @@
 方法1
 1. 下载`Reverse-Toolkit.lua`
 2. 使用GameGuardian执行
+
 方法2
 1. 下载`下载.lua`
 2. 使用GameGuardian执行
