@@ -3,7 +3,7 @@ local addressFormat=1
 local Selected=nil
 local Config={listTypes={{gg.TYPE_DWORD,"D"},{gg.TYPE_FLOAT,"F"},{gg.TYPE_DOUBLE,"E"},{gg.TYPE_WORD,"W"},{gg.TYPE_BYTE,"B"},{gg.TYPE_QWORD,"Q"},{gg.TYPE_XOR,"X"}},
 DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true},
-format=1,distance=5000,path="/sdcard/",name="特征",file="/sdcard/特征",step4=true,noComma=true}--保存HS2的输入
+format=1,distance=5000,path="/sdcard/",name="特征",file="/sdcard/特征",step=4,noComma=true}--保存HS2的输入
 local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard"}--保存HS1的输入
 local ListConfig={showState=false,showValues=false,maxCount=10000}--保存HS10的输入
 local FilterConfig={searchValue="",conditions="",replace=true,floatThreshold=0.001,useF=true,useE=true}--保存HS13的输入
@@ -162,7 +162,6 @@ local a=gg.prompt(
 {CompareConfig.file1,CompareConfig.file2,CompareConfig.name,CompareConfig.path},
 {"file","file","text","path"})
 if not a then return end
-local path=a[4]
 if not a[1]or a[1]==""then gg.alert("文件1不可为空")return end
 if not a[2]or a[2]==""then gg.alert("文件2不可为空")return end
 if not a[3]or a[3]==""then gg.alert("文件名不可为空")return end
@@ -171,7 +170,7 @@ CompareConfig.file1=a[1]
 CompareConfig.file2=a[2]
 CompareConfig.name=a[3]
 CompareConfig.path=a[4]
-if path:sub(-1)~="/"then a[4]=a[4].."/"end
+if a[4]:sub(-1)~="/"then a[4]=a[4].."/"end
 local f1=io.open(a[1],"r")
 if not f1 then gg.alert("无法打开文件1")return end
 local f2=io.open(a[2],"r")
@@ -223,7 +222,7 @@ if check then
 check:close()
 local i=1
 while true do
-local newFile=a[4]..a[4].."("..i..")"
+local newFile=a[4]..a[3].."("..i..")"
 local f=io.open(newFile,"r")
 if f then f:close()i=i+1 else file=newFile break end end end
 local out=io.open(file,"w")
@@ -262,8 +261,8 @@ local address=Selected.address
 local distance=Config.distance
 local request={}
 local offsetList={}
-local step=Config.step4 and 4 or 1
-local maxOffset=Config.step4 and math.floor(distance/4)*4 or distance
+local step=Config.step
+local maxOffset=math.floor(distance/step)*step
 for offset=-maxOffset,maxOffset,step do
 local base=#request
 for _,v in ipairs(types)do
@@ -312,7 +311,7 @@ local a=gg.prompt(
 {"","","checkbox","","checkbox","checkbox"})
 if not a then return end
 local threshold=tonumber(a[4])or 0.001
-if threshold<0 then gg.alert("浮点误差不得小于0")return end
+if threshold<=0 then gg.alert("浮点误差必须大于0")return end
 FilterConfig.searchValue=a[1]
 FilterConfig.conditions=a[2]
 FilterConfig.replace=a[3]
@@ -398,9 +397,9 @@ local typeText={}
 for typ in typeOrder[1]:gmatch("[^,]+")do
 if Config.DataType[typ]then typeText[#typeText+1]=typ end end
 local a=gg.prompt(
-{"数据类型","偏移量进制","特征距离≤","特征文件保存位置","特征文件名称","地址间隔4","数值不添加千位分隔符"},
-{table.concat(typeText,","),Config.format==1 and 10 or 16,Config.distance,Config.path,Config.name,Config.step4,Config.noComma},
-{"","","","path","text","checkbox","checkbox"})
+{"数据类型","偏移量进制","特征距离≤","特征文件保存位置","特征文件名称","地址距离","数值不添加千位分隔符"},
+{table.concat(typeText,","),Config.format==1 and 10 or 16,Config.distance,Config.path,Config.name,Config.step,Config.noComma},
+{"","","","path","text","","checkbox"})
 if not a then return end
 local selectedTypes={}
 for part in (tostring(a[1]or"")..","):gmatch("(.-),")do
@@ -411,6 +410,8 @@ local radix=tonumber(a[2])
 if radix~=10 and radix~=16 then gg.alert("偏移量进制只能是10或16")return end
 local distance=tonumber(a[3])
 if not distance or distance<0 or distance%1~=0 then gg.alert("特征距离必须是不小于0的整数")return end
+local step=tonumber(a[6])
+if not step or step<1 or step%1~=0 then gg.alert("地址距离必须是大于0的整数")return end
 if not a[4]or a[4]==""then gg.alert("保存位置不可为空")return end
 if not a[5]or a[5]==""then gg.alert("文件名不可为空")return end
 if a[4]:sub(-1)~="/"then a[4]=a[4].."/"end
@@ -421,10 +422,10 @@ Config.distance=distance
 Config.path=a[4]
 Config.name=a[5]
 Config.file=a[4]..a[5]
-Config.step4=a[6]
+Config.step=a[6]
 Config.noComma=a[7]end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.6")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.7")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
