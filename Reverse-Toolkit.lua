@@ -4,7 +4,7 @@ local Selected=nil
 local Config={listTypes={{gg.TYPE_DWORD,"D"},{gg.TYPE_FLOAT,"F"},{gg.TYPE_DOUBLE,"E"},{gg.TYPE_WORD,"W"},{gg.TYPE_BYTE,"B"},{gg.TYPE_QWORD,"Q"},{gg.TYPE_XOR,"X"}},
 DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true},
 format=1,distance=5000,path="/sdcard/",name="特征",file="/sdcard/特征",step=4,noComma=true}--保存HS2的输入
-local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard"}--保存HS1的输入
+local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard",ignore=""}--保存对比的输入
 local ListConfig={showState=false,showValues=false,maxCount=10000}--保存HS10的输入
 local FilterConfig={searchValue="",conditions="",replace=true,floatThreshold=0.001,useF=true,useE=true}--保存HS13的输入
 ------------------------------------------------------------------------------------------
@@ -20,9 +20,7 @@ local selected={}
 if type(items)~="table"then return selected end
 for _,v in ipairs(items)do
 if v.address~=nil then
-if v.flags~=nil then selected[tostring(v.address)..":"..tostring(v.flags)]=true
-else selected[tostring(v.address)]=true end end end
-return selected end
+if v.flags~=nil then selected[tostring(v.address)..":"..tostring(v.flags)]=true else selected[tostring(v.address)]=true end end end return selected end
 local function IsListSelected(selected,v)
 if v.flags~=nil then return selected[tostring(v.address)..":"..tostring(v.flags)]==true end
 return selected[tostring(v.address)]==true end
@@ -68,7 +66,7 @@ return({
     function Main0()
 SM("",{
 {"数值选择",Main2},
-{"对比",HS1},
+{"对比",Main3},
 {"特征",Main1},
 {"更新日志",HS9},
 {"退出",HS0}
@@ -151,6 +149,11 @@ ListConfig.showState=a[1]
 ListConfig.showValues=a[2]
 ListConfig.maxCount=maxCount
 addressFormat=radix==16 and 1 or 2 end
+    function Main3()
+SM("",{
+{"对比",HS1},
+{"设置",HS6}
+})end
     function HS1()
 local a=gg.prompt(
 {"文件1","文件2","输出文件名","输出文件保存位置"},
@@ -198,18 +201,30 @@ local body=line:gsub("A%[[^%]]+%]","")
 body=body:match("^%s*%S+%s+(.+)$")or body
 for s in body:gmatch("[^;%s]+")do
 local token=GetValueToken(s)
-if token then values[token]=true end end
-return values,offset end
+if token then values[token]=true end end return values,offset end
+local ignoreRules={}--忽略相同值
+for part in((CompareConfig.ignore or"")..";"):gmatch("(.-);")do
+part=part:match("^%s*(.-)%s*$")
+if part~=""then
+local typ=part:sub(-1):upper()
+local value=part:sub(1,-2):gsub(",","")
+ignoreRules[#ignoreRules+1]={typ=typ,value=value,number=tonumber(value)}end end
+local function IsIgnored(token,typ)
+local value=token:sub(1,-2)
+local number=tonumber(value)
+for _,rule in ipairs(ignoreRules)do
+if rule.typ=="A"or rule.typ==typ then
+if(number~=nil and rule.number~=nil and number==rule.number)or value:lower()==rule.value:lower()then return true end end end return false end
 local index2={}--逐行读取文件2只保留偏移量和对应的数值索引
 local count2=0
-for line in f2:lines()do
+for line in f2:lines()do--根据HS6决定是否创建索引
 count2=count2+1
 local values,offset=GetLineData(line)
 if offset~=nil then
 local target=index2[offset]
-if not target then target={}index2[offset]=target end
 for token in pairs(values)do
-target[token]=true end end end
+if not IsIgnored(token,token:sub(-1))then
+if not target then target={}index2[offset]=target end target[token]=true end end end end
 f2:close()
 local file=a[4]..a[3]--生成不重名的输出文件
 local check=io.open(file,"r")
@@ -236,6 +251,22 @@ if token:sub(-1)==typ and values2[token]then types[#types+1]=typ break end end e
 if #types>0 then out:write(line,table.concat(types,","),"\n")count=count+1 end end end
 f1:close()out:close()
 gg.alert("文件1行数:"..count1.."\n文件2行数:"..count2.."\n保留:"..count.."行\n文件:"..file)end
+    function HS6()
+local a=gg.prompt(
+{"忽略相同值(数值+数据类型;数值+数据类型,例如:0A;1D;5F)"},
+{CompareConfig.ignore or""},
+{""})
+if not a then return end
+local validType={A=true,D=true,F=true,E=true,W=true,B=true,Q=true,X=true}
+for part in ((a[1]or"")..";"):gmatch("(.-);")do
+part=part:match("^%s*(.-)%s*$")
+if part~=""then
+local typ=part:sub(-1):upper()
+local value=part:sub(1,-2):gsub(",","")
+local lower=value:lower()
+local validValue=tonumber(value)~=nil or lower=="nan"or lower=="+nan"or lower=="-nan"or lower=="inf"or lower=="+inf"or lower=="-inf"
+if not validType[typ]or value==""or not validValue then gg.alert("格式错误")return end end end
+CompareConfig.ignore=a[1]or""end
     function Main1()
 SM("",{
 {"扫描",HS8},
@@ -420,7 +451,7 @@ Config.file=a[4]..a[5]
 Config.step=a[6]
 Config.noComma=a[7]end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.8")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.9")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
