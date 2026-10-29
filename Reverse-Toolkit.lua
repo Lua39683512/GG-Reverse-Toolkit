@@ -78,7 +78,7 @@ SM("",{
 {"搜索列表",HS3},
 {"保存列表",HS4},
 {"地址",HS5},
-{"设置",Main4}
+{"设置",HS10}
 })end
     function HS3()
 local n=gg.getResultsCount()
@@ -132,30 +132,25 @@ if not s then return end Selected=r[s]end
 local a=gg.prompt({""},{},{""})
 if not a then return end
 local address
-if addressFormat==1 then address=tonumber(a[1],10)else
+if addressFormat==1 then address=tonumber(a[1],16)else
 local s=a[1]:gsub("^0[xX]","")
-address=tonumber(s,16)end
+address=tonumber(s,10)end
 if not address then gg.alert("格式错误")return end
 Selected={address=address}end
-    function Main4()
-SM("",{
-{"列表",HS10},
-{"地址选择进制",HS11}
-})end
      function HS10()
 local a=gg.prompt(
-{"显示勾选与冻结状态","数值详细显示","列表读取数量≤"},
-{ListConfig.showState,ListConfig.showValues,tostring(ListConfig.maxCount)},
-{"checkbox","checkbox",""})
+{"显示勾选与冻结状态","数值详细显示","列表读取数量≤","地址进制"},
+{ListConfig.showState,ListConfig.showValues,tostring(ListConfig.maxCount),addressFormat==1 and 16 or 10},
+{"checkbox","checkbox","",""})
 if not a then return end
 local maxCount=tonumber(a[3])
-if not maxCount or maxCount<1 or maxCount%1~=0 then gg.alert("最多显示数量必须是大于0的整数")return end
+if not maxCount or maxCount<1 or maxCount%1~=0 then gg.alert("列表读取数量必须是大于0的整数")return end
+local radix=tonumber(a[4])
+if radix~=16 and radix~=10 then gg.alert("地址进制只能是10或16")return end
 ListConfig.showState=a[1]
 ListConfig.showValues=a[2]
-ListConfig.maxCount=maxCount end
-    function HS11()
-local a=gg.choice({10,16},addressFormat,"")
-if not a then return end addressFormat=a end
+ListConfig.maxCount=maxCount
+addressFormat=radix==16 and 1 or 2 end
     function HS1()
 local a=gg.prompt(
 {"文件1","文件2","输出文件名","输出文件保存位置"},
@@ -306,7 +301,7 @@ f:close()
 gg.alert("生成:"..count.."行\n文件:"..Config.file)end
     function HS13()
 local a=gg.prompt(
-{"搜索值(数值+类型,例如:1D)","过滤条件(偏移量+数据类型+数值;偏移量+数据类型+数值,例如:-4F5;0x4Q7)","将符合条件的结果替换搜索结果","浮点误差阈值","F误差","E误差"},
+{"搜索值(数值+类型,例如:1D)","过滤条件(偏移量+数据类型+数值;偏移量+数据类型+数值,例如:-4F5;0x4Q7)","将符合条件的结果替换搜索结果","浮点误差阈值","F类型误差","E类型误差"},
 {FilterConfig.searchValue,FilterConfig.conditions,FilterConfig.replace,FilterConfig.floatThreshold,FilterConfig.useF,FilterConfig.useE},
 {"","","checkbox","","checkbox","checkbox"})
 if not a then return end
@@ -425,7 +420,7 @@ Config.file=a[4]..a[5]
 Config.step=a[6]
 Config.noComma=a[7]end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.7")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.1.8")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
