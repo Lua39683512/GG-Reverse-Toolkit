@@ -176,20 +176,21 @@ local f1=io.open(a[1],"r")--打开对比文件
 if not f1 then gg.alert("无法打开文件1")return end
 local f2=io.open(a[2],"r")
 if not f2 then f1:close()gg.alert("无法打开文件2")return end
-local function DetectCompareFile(f)--根据第一条有效记录判断文件类型,基址文件以模块路径/开头,特征文件包含A[]
+local function DetectCompareFile(f)--根据第一条有效记录判断文件类型,基址文件以模块路径/开头,特征文件包含任意内存范围标记
 local pos=f:seek()
 local kind
 for line in f:lines()do
 local text=line:match("^%s*(.-)%s*$")
 if text~=""and text:sub(1,1)~="#"then
 if text:sub(1,1)=="/"then kind="base"
-elseif text:match("A%[([^%]]+)%]")then kind="feature"end break end end
+elseif text:match("[%a]+%[[^%]]+%]%s*$")then kind="feature"end break end end
 f:seek("set",pos)return kind end
 local fileType1=DetectCompareFile(f1)
 local fileType2=DetectCompareFile(f2)
 if not fileType1 or not fileType2 then f1:close()f2:close()gg.alert("无法识别文件")return end
 if fileType1~=fileType2 then f1:close()f2:close()gg.alert("文件格式不一致")return end
 if fileType1=="base"then--基址文件走基址对比逻辑
+------------------------------------------------------------------------------------------
 local function GetOffsetFormat(f)--读取第一条有效记录的模块偏移,判断偏移进制
 local pos=f:seek()
 local format
@@ -202,14 +203,20 @@ f:seek("set",pos)return format end
 local format1=GetOffsetFormat(f1)
 local format2=GetOffsetFormat(f2)
 local sameFormat=format1~=nil and format1==format2
-local function ParseOffset(value)--将10进制和16进制偏移统一转换为数值,用于不同进制文件之间的对比
+local function ParseOffset(value)--如果1个文件是10进制1个文件是16进制,就将16进制转化为10进制再对比
 value=value:match("^%s*(.-)%s*$")
 local sign=1
 local first=value:sub(1,1)
 if first=="-"then sign=-1 value=value:sub(2)elseif first=="+"then value=value:sub(2)end
-local number
-if value:match("^0[xX]")then number=tonumber(value:sub(3),16)else number=tonumber(value,10)end
-if not number or number%1~=0 then return nil end return sign*number end
+if value:match("^0[xX]")then
+local hex=value:sub(3)
+if not hex:match("^[%da-fA-F]+$")then return nil end
+local number=tonumber(hex,16)
+if not number or number%1~=0 then return nil end return string.format("%.0f",sign*number)end
+if not value:match("^%d+$")then return nil end
+value=value:gsub("^0+","")
+if value==""then return "0"end
+if sign<0 then return "-"..value end return value end
 local function NormalizeLine(line)
 local module,moduleOffset,pointerOffsets,depth=line:match("^(.-)|([^|]+)|([^|]+)|(%d+)$")
 if not module then return nil end
@@ -219,9 +226,9 @@ local offsets={}
 for part in(pointerOffsets..","):gmatch("(.-),")do
 local number=ParseOffset(part)
 if number==nil then return nil end
-offsets[#offsets+1]=string.format("%.0f",number)end
+offsets[#offsets+1]=number end
 if #offsets==0 then return nil end
-return module.."|"..string.format("%.0f",base).."|"..table.concat(offsets,",").."|"..depth end
+return module.."|"..base.."|"..table.concat(offsets,",").."|"..depth end
 local function GetBaseKey(line)
 if sameFormat then return line end
 return NormalizeLine(line)end
@@ -243,9 +250,9 @@ local key=GetBaseKey(line)
 if key then count1=count1+1
 if index[key]then out:write(line,"\n")matched=matched+1 end end end end
 f1:close()out:close()
-gg.alert("文件1:"..count1.."条\n文件2:"..count2.."条\n共同:"..matched.."条\n文件:"..file)return end
+gg.alert("文件1:"..count1.."条\n文件2:"..count2.."条\n保留:"..matched.."条\n文件:"..file)return end
 ------------------------------------------------------------------------------------------
-local order={"D","F","E","W","B","Q","X"}
+local order={"D","F","E","W","B","Q","X"}--特征对比
 local validType={D=true,F=true,E=true,W=true,B=true,Q=true,X=true}
 local function NormalizeOffset(s)--偏移量解析
 if not s then return nil end
@@ -266,11 +273,11 @@ local lower=value:lower()
 if lower=="nan"or lower=="+nan"or lower=="-nan"or lower=="inf"or lower=="+inf"or lower=="-inf"then return value..typ,typ end
 if value:match("^[+-]?%d+%.?%d*[eE][+-]?%d+$")or value:match("^[+-]?%d+%.?%d*$")or value:match("^[+-]?%d*%.%d+$")then return value..typ,typ end return nil end
 local function GetLineData(line)
-local rawOffset=line:match("A%[([^%]]+)%]")--提取A[]中的偏移
+local range,rawOffset=line:match("([%a]+)%[([^%]]+)%]%s*$")--提取内存范围标记及偏移,支持A/O/V等范围
 local offset=NormalizeOffset(rawOffset)
 if offset==nil then return nil,nil end--没有有效偏移量时跳过该行
 local values={}
-local body=line:gsub("A%[[^%]]+%]","")
+local body=line:gsub("%s+[%a]+%[[^%]]+%]%s*$","")--移除行尾内存范围标记
 body=body:match("^%s*%S+%s+(.+)$")or body
 for s in body:gmatch("[^;%s]+")do
 local token=GetValueToken(s)
@@ -379,6 +386,8 @@ request[#request+1]={address=address+offset,flags=v[1]}end
 offsetList[#offsetList+1]={offset=offset,base=base}end
 local result=gg.getValues(request)
 if type(result)~="table"then gg.alert("读取失败")return end
+local ranges=gg.getValuesRange(result)
+if type(ranges)~="table"then ranges={}end
 local function FormatValue(v)
 local s=tostring(v)
 s=s:gsub("^nan$","NaN")
@@ -409,7 +418,9 @@ if #line>0 then
 local offset
 if Config.format==1 then offset=string.format("%.0f",o.offset)else
 if o.offset<0 then offset="-0x"..string.format("%X",-o.offset)else offset="0x"..string.format("%X",o.offset)end end
-f:write(string.format("%X",address+o.offset),"    ",table.concat(line,"  ;  "),"    A[",offset,"]\n")
+local range=ranges[pos+1]
+if type(range)~="string"or range==""then range="Unknown"end
+f:write(string.format("%X",address+o.offset),"    ",table.concat(line,"  ;  "),"    ",range,"[",offset,"]\n")
 count=count+1 end end
 f:close()
 gg.alert("生成:"..count.."行\n文件:"..Config.file)end
@@ -652,8 +663,7 @@ if #nextFrontier<BaseConfig.limit then--无论是否找到模块,都继续向上
 local key=tostring(v.address)..":"..table.concat(offsetText,",")
 if not nextSeen[key]then
 nextSeen[key]=true
-nextFrontier[#nextFrontier+1]={address=v.address,chain=chain}
-end end
+nextFrontier[#nextFrontier+1]={address=v.address,chain=chain}end end
 if #nextFrontier>=BaseConfig.limit then break end end end end
 frontier=nextFrontier
 finished=level
@@ -661,7 +671,7 @@ gg.toast("基址扫描"..level.."/"..depth.."层|目标:"..#frontier.."|候选:"
 f:close()
 gg.alert("找到:"..found.."条\n文件:"..output)end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.1")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.2")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
