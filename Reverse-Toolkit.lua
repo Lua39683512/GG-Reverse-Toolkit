@@ -9,6 +9,7 @@ format=1,distance=5000,path="/sdcard/",name="特征",file="/sdcard/特征",step=
 local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard",ignore=""}--保存对比的输入
 local ListConfig={showState=false,showValues=false,maxCount=10000}--保存HS10的输入
 local FilterConfig={searchValue="",conditions="",replace=true,floatThreshold=0.001,useF=true,useE=true}--保存HS13的输入
+local BaseConfig={depth=30,maxOffset=65535,limit=100000,offsetFormat=10,outputPath="/sdcard/",outputName="基址",output="/sdcard/基址"}--保存HS14的输入
 ------------------------------------------------------------------------------------------
 local function FormatListValue(value)
 if value==nil then return"?"end
@@ -24,9 +25,7 @@ for _,v in ipairs(items)do
 if v.address~=nil then
 if v.flags~=nil then selected[tostring(v.address)..":"..tostring(v.flags)]=true else selected[tostring(v.address)]=true end end end return selected end
 local function IsListSelected(selected,v)
-if v.flags~=nil then
-return selected[tostring(v.address)..":"..tostring(v.flags)]==true end
-return selected[tostring(v.address)]==true end
+if v.flags~=nil then return selected[tostring(v.address)..":"..tostring(v.flags)]==true end return selected[tostring(v.address)]==true end
 local function GetDetailedValues(items)
 local detailed={}
 local batchSize=999
@@ -45,6 +44,17 @@ for j,t in ipairs(Config.listTypes)do
 local v=values[base+j]
 line[#line+1]=FormatListValue(v and v.value)..t[2]end
 detailed[i]=table.concat(line,"; ")end end return detailed end
+local function GetUniqueFilePath(path)--生成不重名的文件路径,不自动添加扩展名
+local check=io.open(path,"rb")
+if not check then return path end
+check:close()
+local i=1
+while true do
+local newPath=path.."("..i..")"
+local f=io.open(newPath,"rb")
+if not f then return newPath end
+f:close()
+i=i+1 end end
 --====================================================
 function SM(title,data,isMain)--增加一个函数"SM"用于优化菜单
 local menu={}
@@ -60,6 +70,7 @@ SM("",{
 {"数值选择",Main2},
 {"对比",Main3},
 {"特征",Main1},
+{"基址",Main4},
 {"更新日志",HS9},
 {"退出",HS0}
 },true)end
@@ -165,6 +176,75 @@ local f1=io.open(a[1],"r")--打开对比文件
 if not f1 then gg.alert("无法打开文件1")return end
 local f2=io.open(a[2],"r")
 if not f2 then f1:close()gg.alert("无法打开文件2")return end
+local function DetectCompareFile(f)--根据第一条有效记录判断文件类型,基址文件以模块路径/开头,特征文件包含A[]
+local pos=f:seek()
+local kind
+for line in f:lines()do
+local text=line:match("^%s*(.-)%s*$")
+if text~=""and text:sub(1,1)~="#"then
+if text:sub(1,1)=="/"then kind="base"
+elseif text:match("A%[([^%]]+)%]")then kind="feature"end break end end
+f:seek("set",pos)return kind end
+local fileType1=DetectCompareFile(f1)
+local fileType2=DetectCompareFile(f2)
+if not fileType1 or not fileType2 then f1:close()f2:close()gg.alert("无法识别文件")return end
+if fileType1~=fileType2 then f1:close()f2:close()gg.alert("文件格式不一致")return end
+if fileType1=="base"then--基址文件走基址对比逻辑
+local function GetOffsetFormat(f)--读取第一条有效记录的模块偏移,判断偏移进制
+local pos=f:seek()
+local format
+for line in f:lines()do
+local text=line:match("^%s*(.-)%s*$")
+if text~=""and text:sub(1,1)~="#"then
+local offset=text:match("^[^|]*|([^|]+)|")
+if offset then format=offset:match("^%s*0[xX]")and 16 or 10 end break end end
+f:seek("set",pos)return format end
+local format1=GetOffsetFormat(f1)
+local format2=GetOffsetFormat(f2)
+local sameFormat=format1~=nil and format1==format2
+local function ParseOffset(value)--将10进制和16进制偏移统一转换为数值,用于不同进制文件之间的对比
+value=value:match("^%s*(.-)%s*$")
+local sign=1
+local first=value:sub(1,1)
+if first=="-"then sign=-1 value=value:sub(2)elseif first=="+"then value=value:sub(2)end
+local number
+if value:match("^0[xX]")then number=tonumber(value:sub(3),16)else number=tonumber(value,10)end
+if not number or number%1~=0 then return nil end return sign*number end
+local function NormalizeLine(line)
+local module,moduleOffset,pointerOffsets,depth=line:match("^(.-)|([^|]+)|([^|]+)|(%d+)$")
+if not module then return nil end
+local base=ParseOffset(moduleOffset)
+if base==nil then return nil end
+local offsets={}
+for part in(pointerOffsets..","):gmatch("(.-),")do
+local number=ParseOffset(part)
+if number==nil then return nil end
+offsets[#offsets+1]=string.format("%.0f",number)end
+if #offsets==0 then return nil end
+return module.."|"..string.format("%.0f",base).."|"..table.concat(offsets,",").."|"..depth end
+local function GetBaseKey(line)
+if sameFormat then return line end
+return NormalizeLine(line)end
+local index={}
+local count2=0
+for line in f2:lines()do
+if line~=""and line:sub(1,1)~="#"then
+local key=GetBaseKey(line)
+if key then index[key]=true count2=count2+1 end end end
+f2:close()
+local file=GetUniqueFilePath(a[4]..a[3])
+local out=io.open(file,"w")
+if not out then f1:close()gg.alert("创建文件失败:\n"..file)return end
+local count1=0
+local matched=0
+for line in f1:lines()do
+if line~=""and line:sub(1,1)~="#"then
+local key=GetBaseKey(line)
+if key then count1=count1+1
+if index[key]then out:write(line,"\n")matched=matched+1 end end end end
+f1:close()out:close()
+gg.alert("文件1:"..count1.."条\n文件2:"..count2.."条\n共同:"..matched.."条\n文件:"..file)return end
+------------------------------------------------------------------------------------------
 local order={"D","F","E","W","B","Q","X"}
 local validType={D=true,F=true,E=true,W=true,B=true,Q=true,X=true}
 local function NormalizeOffset(s)--偏移量解析
@@ -256,7 +336,7 @@ f1:close()out:close()
 gg.alert("文件1行数:"..count1.."\n文件2行数:"..count2.."\n保留:"..count.."行\n文件:"..file)end
     function HS6()
 local a=gg.prompt(
-{"忽略相同值(数值+数据类型;数值+数据类型,例如:0A;1D;5F)"},
+{"特征对比忽略相同值(数值+数据类型;数值+数据类型,例如:0A;1D;5F)"},
 {CompareConfig.ignore or""},
 {""})
 if not a then return end
@@ -453,8 +533,135 @@ Config.name=a[5]
 Config.file=a[4]..a[5]
 Config.step=step
 Config.noComma=a[7]end
+    function Main4()
+SM("",{
+{"扫描",HS14},
+{"设置",HS17}
+})end
+    function HS17()
+local a=gg.prompt(
+{"扫描深度","最大指针偏移","文件保存位置","文件名","偏移量进制"},
+{BaseConfig.depth,BaseConfig.maxOffset,BaseConfig.outputPath,BaseConfig.outputName,BaseConfig.offsetFormat or 10},
+{"","","path","text",""})
+if not a then return end
+local depth=tonumber(a[1])
+if not depth or depth<1 or depth>30 or depth%1~=0 then gg.alert("扫描深度必须是1到30之间的整数")return end
+local maxOffset=tonumber(a[2])
+if not maxOffset or maxOffset<1 or maxOffset>65535 or maxOffset%1~=0 then gg.alert("最大指针偏移必须是大于0小于65535的整数")return end
+if not a[3]or a[3]==""then gg.alert("基址文件保存位置不可为空")return end
+if not a[4]or a[4]==""then gg.alert("基址文件名不可为空")return end
+local radix=tonumber(a[5])
+if radix~=10 and radix~=16 then gg.alert("偏移量进制只能是10或16")return end
+if a[3]:sub(-1)~="/"then a[3]=a[3].."/"end
+BaseConfig.depth=depth
+BaseConfig.maxOffset=maxOffset
+BaseConfig.outputPath=a[3]
+BaseConfig.outputName=a[4]
+BaseConfig.output=a[3]..a[4]
+BaseConfig.offsetFormat=radix end
+    function HS14()
+if not Selected or not Selected.address then gg.alert("数值未选择")return end--只使用Main2选中的数值,不再读取GG勾选列表或要求手动指定模块
+local targetAddress=Selected.address
+local depth=BaseConfig.depth
+local maxOffset=BaseConfig.maxOffset
+if not depth or depth<1 or depth>30 or depth%1~=0 then gg.alert("扫描深度必须是大于0小于30的整数")return end
+if not maxOffset or maxOffset<0 or maxOffset>65535 or maxOffset%1~=0 then gg.alert("最大指针偏移必须是大于0小于65535的整数")return end
+local output=BaseConfig.output
+if not output or output==""then gg.alert("请先在基址设置中设置文件保存位置和文件名")return end
+output=GetUniqueFilePath(output)--文件已存在时防止重名
+local ok,ranges=pcall(gg.getRangesList)--获取当前进程的全部命名内存映射,后续自动判断基址属于哪个模块
+if not ok or type(ranges)~="table"then gg.alert("获取内存映射失败:\n"..tostring(ranges))return end
+local moduleMap={}
+local moduleRanges={}
+for _,v in ipairs(ranges)do
+local name=v.name
+if type(name)~="string"or name==""or name:sub(1,1)=="["then name=v.internalName end
+if type(name)=="string"and name~=""and name:sub(1,1)~="["and name:lower():match("%.so")and v.start and v["end"]then
+local g=moduleMap[name]
+if not g then g={name=name,base=v.start}moduleMap[name]=g elseif v.start<g.base then g.base=v.start end
+moduleRanges[#moduleRanges+1]={start=v.start,finish=v["end"],module=g}end end
+if #moduleRanges==0 then gg.alert("没有找到可作为基址的模块映射")return end
+table.sort(moduleRanges,function(x,y)return x.start<y.start end)--按起始地址排序,便于通过二分查找确定候选指针属于哪个模块
+local function FindModule(address)
+local low,high=1,#moduleRanges
+while low<=high do
+local mid=math.floor((low+high)/2)
+local v=moduleRanges[mid]
+if address<v.start then high=mid-1 elseif address>=v.finish then low=mid+1 else return v.module end end return nil end
+local f=io.open(output,"w")
+if not f then gg.alert("无法创建文件:\n"..output)return end
+local info=gg.getTargetInfo()or{}
+local pointerFlag=info.x64 and gg.TYPE_QWORD or gg.TYPE_DWORD
+local seedFrontier={{address=targetAddress,chain={}}}
+local function FormatHex(n)
+if n<0 then return"-0x"..string.format("%X",-n)end return"0x"..string.format("%X",n)end
+local function FormatBaseOffset(n)
+if BaseConfig.offsetFormat==10 then return string.format("%.0f",n)end return FormatHex(n)end
+local function FindParents(nodes,value)
+local low,high=1,#nodes--从当前层目标地址中寻找与指针值距离不超过最大偏移的候选父节点
+while low<=high do
+local mid=math.floor((low+high)/2)
+if nodes[mid].address<value then low=mid+1 else high=mid-1 end end
+local left,right=low-1,low
+local parents={}
+while #parents<99 do
+local leftDistance=left>=1 and math.abs(nodes[left].address-value)or math.huge
+local rightDistance=right<=#nodes and math.abs(nodes[right].address-value)or math.huge
+if math.min(leftDistance,rightDistance)>maxOffset then break end
+if leftDistance<=rightDistance then parents[#parents+1]=nodes[left]left=left-1 else parents[#parents+1]=nodes[right]right=right+1 end end return parents end
+local frontier=seedFrontier
+local found=0
+local foundMap={}
+local finished=0
+local failed
+for level=1,depth do
+if #frontier==0 then break end
+table.sort(frontier,function(x,y)return x.address<y.address end)--按地址排序,便于通过指针值快速定位上一层节点
+local seed={}
+for i,v in ipairs(frontier)do seed[i]={address=v.address,flags=pointerFlag}end
+gg.clearResults()
+local ok,result=pcall(gg.loadResults,seed)
+if not ok or result==false or type(result)=="string"then failed="加载第"..level.."层搜索目标失败:"..tostring(result)break end
+local ok2,result2=pcall(gg.searchPointer,maxOffset,0,-1,BaseConfig.limit)
+if not ok2 or result2~=true then failed="第"..level.."层指针搜索失败:"..tostring(result2)break end
+local count=gg.getResultsCount()
+if count==0 then break end
+local current=gg.getResults(math.min(count,BaseConfig.limit))
+if type(current)~="table"then failed="读取第"..level.."层搜索结果失败"break end
+local nextFrontier={}
+local nextSeen={}
+for _,v in ipairs(current)do
+local value=tonumber(v.value)
+if value and v.address then
+local parents=FindParents(frontier,value)
+for _,parent in ipairs(parents)do
+local offset=parent.address-value
+local chain={offset}
+for i=1,#parent.chain do chain[#chain+1]=parent.chain[i]end
+local offsetText={}
+for i,n in ipairs(chain)do offsetText[i]=FormatBaseOffset(n)end
+local module=FindModule(v.address)--候选指针存储位置属于某个命名模块时,将该模块作为基址并记录结果
+if module then
+local moduleOffset=v.address-module.base
+local row=module.name.."|"..FormatBaseOffset(moduleOffset).."|"..table.concat(offsetText,",").."|"..level
+if not foundMap[row]then
+foundMap[row]=true
+f:write(row,"\n")
+found=found+1 end end
+if #nextFrontier<BaseConfig.limit then--无论是否找到模块,都继续向上一层搜索
+local key=tostring(v.address)..":"..table.concat(offsetText,",")
+if not nextSeen[key]then
+nextSeen[key]=true
+nextFrontier[#nextFrontier+1]={address=v.address,chain=chain}
+end end
+if #nextFrontier>=BaseConfig.limit then break end end end end
+frontier=nextFrontier
+finished=level
+gg.toast("基址扫描"..level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found,true)end
+f:close()
+gg.alert("找到:"..found.."条\n文件:"..output)end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.0")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.1")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
