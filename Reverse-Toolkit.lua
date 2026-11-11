@@ -599,29 +599,30 @@ local f=io.open(output,"w")
 if not f then gg.alert("无法创建文件:\n"..output)return end
 local info=gg.getTargetInfo()or{}
 local pointerFlag=info.x64 and gg.TYPE_QWORD or gg.TYPE_DWORD
-local seedFrontier={{address=targetAddress,chain={}}}
+local seedFrontier={{address=targetAddress,chainText=""}}
 local function FormatHex(n)
 if n<0 then return"-0x"..string.format("%X",-n)end return"0x"..string.format("%X",n)end
+local offsetCache={}
 local function FormatBaseOffset(n)
-if BaseConfig.offsetFormat==10 then return string.format("%.0f",n)end return FormatHex(n)end
-local function FindParents(nodes,value)
+local s=offsetCache[n]
+if s then return s end
+if BaseConfig.offsetFormat==10 then s=string.format("%.0f",n)else s=FormatHex(n)end offsetCache[n]=s return s end
+local function FindParentBounds(nodes,value)
 local low,high=1,#nodes--从当前层目标地址中寻找与指针值距离不超过最大偏移的候选父节点
 while low<=high do
 local mid=math.floor((low+high)/2)
 if nodes[mid].address<value then low=mid+1 else high=mid-1 end end
 local left,right=low-1,low
-local parents={}
-while #parents<99 do
 local leftDistance=left>=1 and math.abs(nodes[left].address-value)or math.huge
 local rightDistance=right<=#nodes and math.abs(nodes[right].address-value)or math.huge
-if math.min(leftDistance,rightDistance)>maxOffset then break end
-if leftDistance<=rightDistance then parents[#parents+1]=nodes[left]left=left-1 else parents[#parents+1]=nodes[right]right=right+1 end end return parents end
+if leftDistance>maxOffset and rightDistance>maxOffset then return end return left,right,leftDistance,rightDistance end
 local frontier=seedFrontier
 local found=0
 local foundMap={}
 local finished=0
 local failed
 for level=1,depth do
+offsetCache={}
 if #frontier==0 then break end
 table.sort(frontier,function(x,y)return x.address<y.address end)--按地址排序,便于通过指针值快速定位上一层节点
 local seed={}
@@ -638,42 +639,46 @@ local current=gg.getResults(math.min(count,BaseConfig.limit))
 if type(current)~="table"then failed="读取第"..level.."层搜索结果失败"break end
 local nextFrontier={}
 local nextSeen={}
+local writeRows={}
 for _,v in ipairs(current)do
 local value=tonumber(v.value)
 if value and v.address then
-local parents
+local left,right,leftDistance,rightDistance
 local module
 if #nextFrontier>=BaseConfig.limit then module=FindModule(v.address)
-if module then parents=FindParents(frontier,value)end
-else parents=FindParents(frontier,value)
-if #parents>0 then module=FindModule(v.address)end end
-if parents and #parents>0 then
+if module then left,right,leftDistance,rightDistance=FindParentBounds(frontier,value)end
+else left,right,leftDistance,rightDistance=FindParentBounds(frontier,value)
+if left~=nil then module=FindModule(v.address)end end
+if left~=nil then
 local modulePrefix
 if module then modulePrefix=module.name.."|"..FormatBaseOffset(v.address-module.base).."|"end
-local addressKey=tostring(v.address)
-for _,parent in ipairs(parents)do
-if not module and #nextFrontier>=BaseConfig.limit then break end
+local parentCount=0
+while parentCount<99 and (module or #nextFrontier<BaseConfig.limit) and (leftDistance<=maxOffset or rightDistance<=maxOffset) do
+local parent
+if leftDistance<=rightDistance then parent=frontier[left]left=left-1 leftDistance=left>=1 and math.abs(frontier[left].address-value)or math.huge
+else parent=frontier[right]right=right+1 rightDistance=right<=#frontier and math.abs(frontier[right].address-value)or math.huge end
+parentCount=parentCount+1
 local offset=parent.address-value
-local chain={offset}
-for i=1,#parent.chain do
-chain[#chain+1]=parent.chain[i]end
-local offsetText={}
-for i,n in ipairs(chain)do
-offsetText[i]=FormatBaseOffset(n)end
-local chainText=table.concat(offsetText,",")
+local offsetText=FormatBaseOffset(offset)
+local parentChain=parent.chainText
+local chainText=parentChain==""and offsetText or offsetText..","..parentChain
 if module then
 local row=modulePrefix..chainText.."|"..level
-if not foundMap[row]then foundMap[row]=true f:write(row,"\n")found=found+1 end end
+if not foundMap[row]then foundMap[row]=true writeRows[#writeRows+1]=row found=found+1 end end
 if #nextFrontier<BaseConfig.limit then
-local key=addressKey..":"..chainText
-if not nextSeen[key]then nextSeen[key]=true nextFrontier[#nextFrontier+1]={address=v.address,chain=chain}end end end  end end end
+local seen=nextSeen[v.address]
+if not seen then seen={}nextSeen[v.address]=seen end
+if not seen[chainText]then seen[chainText]=true nextFrontier[#nextFrontier+1]={address=v.address,chainText=chainText}end end end end end end
+if #writeRows>0 then
+local writeOK,writeErr=f:write(table.concat(writeRows,"\n"),"\n")
+if not writeOK then failed="第"..level.."层基址写入失败:"..tostring(writeErr)break end end
 frontier=nextFrontier
 finished=level
-gg.toast("基址扫描"..level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found,true)end
+gg.toast(level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found,true)end
 f:close()
 gg.alert("找到:"..found.."条\n文件:"..output)end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.3")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.4")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
