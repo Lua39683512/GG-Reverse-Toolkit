@@ -9,7 +9,7 @@ format=1,distance=5000,path="/sdcard/",name="特征",file="/sdcard/特征",step=
 local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard",ignore=""}--保存对比的输入
 local ListConfig={showState=false,showValues=false,maxCount=10000}--保存HS10的输入
 local FilterConfig={searchValue="",conditions="",replace=true,floatThreshold=0.001,useF=true,useE=true}--保存HS13的输入
-local BaseConfig={depth=3,maxOffset=65535,limit=1000000,offsetFormat=10,outputPath="/sdcard/",outputName="基址",output="/sdcard/基址",fullModulePath=false}--保存HS14的输入
+local BaseConfig={depth=1,maxOffset=65535,limit=1000000,offsetFormat=10,outputPath="/sdcard/",outputName="基址",output="/sdcard/基址",fullModulePath=false,restoreResults=false,writeDepth=false}--保存HS14的输入
 ------------------------------------------------------------------------------------------
 local function FormatListValue(value)
 if value==nil then return"?"end
@@ -229,7 +229,9 @@ value=value:gsub("^0+","")
 if value==""then return "0"end
 if sign<0 then return "-"..value end return value end
 local function NormalizeLine(line,normalizeModule)
-local module,moduleOffset,pointerOffsets,depth=line:match("^(.-)|([^|]+)|([^|]+)|(%d+)$")
+local module,moduleOffset,pointerOffsets=line:match("^(.-)|([^|]+)|([^|]+)|%d+$")
+if not module then
+module,moduleOffset,pointerOffsets=line:match("^(.-)|([^|]+)|([^|]+)$")end
 if not module then return nil end
 if normalizeModule then module=module:match("([^/]+)$")or module end
 local base=ParseOffset(moduleOffset)
@@ -240,10 +242,16 @@ local number=ParseOffset(part)
 if number==nil then return nil end
 offsets[#offsets+1]=number end
 if #offsets==0 then return nil end
-return module.."|"..base.."|"..table.concat(offsets,",").."|"..depth end
+return module.."|"..base.."|"..table.concat(offsets,",")end
 local function GetBaseKey(line)
 if line=="/"then return nil end
-if sameFormat and not normalizeModule then return line end
+if sameFormat then
+local key=line:gsub("|%d+$","")
+if normalizeModule then
+local module,rest=key:match("^([^|]+)(|.*)$")
+if not module then return nil end
+key=(module:match("([^/]+)$")or module)..rest end
+return key end
 return NormalizeLine(line,normalizeModule)end
 local index={}
 local count2=0
@@ -576,8 +584,72 @@ local maxOffset=BaseConfig.maxOffset
 local output=BaseConfig.output
 if not output or output==""then gg.alert("请先在基址设置中设置文件保存位置和文件名")return end
 output=GetUniqueFilePath(output)--文件已存在时防止重名
+local savedResults
+local savedResultCount=0
+if BaseConfig.restoreResults then
+local countOK,count=pcall(gg.getResultsCount)
+if not countOK or type(count)~="number"or count<0 or count%1~=0 then gg.alert("读取搜索列表数量失败:\n"..tostring(count))return end
+savedResultCount=count
+savedResults={}
+local batchSize=500000
+for first=0,count-1,batchSize do
+local expected=math.min(batchSize,count-first)
+local readOK,chunk=pcall(gg.getResults,expected,first)
+if not readOK or type(chunk)~="table"then gg.alert("备份搜索列表失败:\n"..tostring(chunk))return end
+if #chunk~=expected then gg.alert("备份搜索列表数量不一致\n预期:"..expected.."条\n实际:"..#chunk.."条")return end
+for _,v in ipairs(chunk)do
+if v.address==nil or v.flags==nil then gg.alert("搜索列表中存在缺少地址或数值类型的项目")return end
+savedResults[#savedResults+1]={address=v.address,flags=v.flags,value=v.value}end end end
+local rangeOK,originalRanges=pcall(gg.getRanges)
+if not rangeOK or type(originalRanges)~="number"then gg.alert("读取当前内存范围失败:\n"..tostring(originalRanges))return end
+local rangeNames={
+"REGION_JAVA_HEAP","REGION_C_HEAP","REGION_C_ALLOC","REGION_C_BSS","REGION_C_DATA",
+"REGION_PPSSPP","REGION_ANONYMOUS","REGION_JAVA","REGION_STACK","REGION_ASHMEM",
+"REGION_VIDEO","REGION_OTHER","REGION_BAD","REGION_CODE_APP","REGION_CODE_SYS"}
+local allRanges=0
+local flagsSeen={}
+for _,name in ipairs(rangeNames)do
+local flag=gg[name]
+if type(flag)~="number"then gg.alert("当前GG不支持内存范围常量:"..name)return end
+if flagsSeen[flag]then gg.alert("内存范围常量重复:"..name)return end
+flagsSeen[flag]=true allRanges=allRanges+flag end
+local changedRanges=originalRanges~=allRanges
+if changedRanges then
+local setOK,setErr=pcall(gg.setRanges,allRanges)
+if not setOK then gg.alert("设置全部内存范围失败:\n"..tostring(setErr))return end end
+local activeFile
+local function RestoreSearchResults()
+if not BaseConfig.restoreResults then return true,""end
+if savedResultCount==0 then
+local clearOK,clearErr=pcall(gg.clearResults)
+if not clearOK then return false,"清空扫描结果失败:"..tostring(clearErr)end
+return true,"搜索列表已恢复:0条"end
+local refreshedCount=0
+local staleCount=0
+local batchSize=500000
+for first=1,#savedResults,batchSize do
+local last=math.min(first+batchSize-1,#savedResults)
+local request={}
+for i=first,last do
+local v=savedResults[i]
+request[#request+1]={address=v.address,flags=v.flags}end
+local readOK,values=pcall(gg.getValues,request)
+if readOK and type(values)=="table"then
+for i=1,#request do
+local current=values[i]
+local saved=savedResults[first+i-1]
+if type(current)=="table"and current.value~=nil and current.address==saved.address and current.flags==saved.flags then
+saved.value=current.value refreshedCount=refreshedCount+1
+else staleCount=staleCount+1 end end
+else staleCount=staleCount+(last-first+1)end end
+local loadOK,loadResult=pcall(gg.loadResults,savedResults)
+if not loadOK or loadResult~=true then return false,"重新加载搜索列表失败:"..tostring(loadResult)end
+local message="搜索列表已恢复:"..#savedResults.."条\n已更新数值:"..refreshedCount.."条"
+if staleCount>0 then message=message.."\n无法重新读取:"..staleCount.."条(保留扫描前数值)"end
+return true,message end
+local function Scan()
 local ok,ranges=pcall(gg.getRangesList)--获取当前进程的全部命名内存映射,后续自动判断基址属于哪个模块
-if not ok or type(ranges)~="table"then gg.alert("获取内存映射失败:\n"..tostring(ranges))return end
+if not ok or type(ranges)~="table"then return false,"获取内存映射失败:\n"..tostring(ranges)end
 local moduleMap={}
 local moduleRanges={}
 for _,v in ipairs(ranges)do
@@ -587,7 +659,7 @@ if type(name)=="string"and name~=""and name:sub(1,1)~="["and name:lower():match(
 local g=moduleMap[name]
 if not g then g={name=name,base=v.start}moduleMap[name]=g elseif v.start<g.base then g.base=v.start end
 moduleRanges[#moduleRanges+1]={start=v.start,finish=v["end"],module=g}end end
-if #moduleRanges==0 then gg.alert("没有找到可作为基址的模块映射")return end
+if #moduleRanges==0 then return false,"没有找到可作为基址的模块映射"end
 table.sort(moduleRanges,function(x,y)return x.start<y.start end)--按起始地址排序,便于通过二分查找确定候选指针属于哪个模块
 local function FindModule(address)
 local low,high=1,#moduleRanges
@@ -596,10 +668,11 @@ local mid=math.floor((low+high)/2)
 local v=moduleRanges[mid]
 if address<v.start then high=mid-1 elseif address>=v.finish then low=mid+1 else return v.module end end return nil end
 local f=io.open(output,"w")
-if not f then gg.alert("无法创建文件:\n"..output)return end
+if not f then return false,"无法创建文件:\n"..output end
+activeFile=f
 if not BaseConfig.fullModulePath then
 local markerOK,markerErr=f:write("/\n")
-if not markerOK then f:close()gg.alert("写入基址文件标识失败:\n"..tostring(markerErr))return end end
+if not markerOK then f:close()activeFile=nil return false,"写入基址文件标识失败:\n"..tostring(markerErr)end end
 local info=gg.getTargetInfo()or{}
 local pointerFlag=info.x64 and gg.TYPE_QWORD or gg.TYPE_DWORD
 local seedFrontier={{address=targetAddress,chainText=""}}
@@ -622,7 +695,6 @@ if leftDistance>maxOffset and rightDistance>maxOffset then return end return lef
 local frontier=seedFrontier
 local found=0
 local foundMap={}
-local finished=0
 local failed
 for level=1,depth do
 offsetCache={}
@@ -632,10 +704,10 @@ local seed={}
 for i,v in ipairs(frontier)do
 seed[i]={address=v.address,flags=pointerFlag}end
 gg.clearResults()
-local ok,result=pcall(gg.loadResults,seed)
-if not ok or result==false or type(result)=="string"then failed="加载第"..level.."层搜索目标失败:"..tostring(result)break end
-local ok2,result2=pcall(gg.searchPointer,maxOffset,0,-1,BaseConfig.limit)
-if not ok2 or result2~=true then failed="第"..level.."层指针搜索失败:"..tostring(result2)break end
+local loadOK,result=pcall(gg.loadResults,seed)
+if not loadOK or result==false or type(result)=="string"then failed="加载第"..level.."层搜索目标失败:"..tostring(result)break end
+local searchOK,searchResult=pcall(gg.searchPointer,maxOffset,0,-1,BaseConfig.limit)
+if not searchOK or searchResult~=true then failed="第"..level.."层指针搜索失败:"..tostring(searchResult)break end
 local count=gg.getResultsCount()
 if count==0 then break end
 local current=gg.getResults(math.min(count,BaseConfig.limit))
@@ -669,7 +741,8 @@ local offsetText=FormatBaseOffset(offset)
 local parentChain=parent.chainText
 local chainText=parentChain==""and offsetText or offsetText..","..parentChain
 if module then
-local row=modulePrefix..chainText.."|"..level
+local row=modulePrefix..chainText
+if BaseConfig.writeDepth then row=row.."|"..level end
 local key=module.name.."|"..chainText.."|"..level
 if not foundMap[key]then foundMap[key]=true writeRows[#writeRows+1]=row found=found+1 end end
 if #nextFrontier<BaseConfig.limit then
@@ -680,15 +753,36 @@ if #writeRows>0 then
 local writeOK,writeErr=f:write(table.concat(writeRows,"\n"),"\n")
 if not writeOK then failed="第"..level.."层基址写入失败:"..tostring(writeErr)break end end
 frontier=nextFrontier
-finished=level
 gg.toast(level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found,true)end
-f:close()
-gg.alert("找到:"..found.."条\n文件:"..output)end
+local closeOK,closeErr=f:close()
+activeFile=nil
+if not closeOK then return false,"关闭基址文件失败:\n"..tostring(closeErr)end
+if failed then return false,"扫描中断:\n"..failed.."\n已找到:"..found.."条\n文件:"..output end
+return true,"找到:"..found.."条\n文件:"..output end
+local scanCallOK,scanSuccess,scanMessage=pcall(Scan)
+if activeFile then pcall(activeFile.close,activeFile)activeFile=nil end
+local listRestoreOK,listRestoreMessage=true,nil
+if BaseConfig.restoreResults then
+local restoreCallOK,restoreSuccess,restoreMessage=pcall(RestoreSearchResults)
+if not restoreCallOK then listRestoreOK=false listRestoreMessage="恢复搜索列表发生异常:"..tostring(restoreSuccess)
+elseif not restoreSuccess then listRestoreOK=false listRestoreMessage=tostring(restoreMessage)
+else listRestoreMessage=restoreMessage end end
+local restoreOK,restoreErr=true,nil
+if changedRanges then restoreOK,restoreErr=pcall(gg.setRanges,originalRanges)end
+local message
+if not scanCallOK then message="扫描发生异常:\n"..tostring(scanSuccess)
+elseif not scanSuccess then message=tostring(scanMessage)
+else message=tostring(scanMessage)end
+if BaseConfig.restoreResults then
+if listRestoreOK then message=message.."\n"..tostring(listRestoreMessage)
+else message=message.."\n"..tostring(listRestoreMessage)end end
+if not restoreOK then message=message.."\n恢复原内存范围失败:\n"..tostring(restoreErr)end
+gg.alert(message)end
     function HS17()
 local a=gg.prompt(
-{"扫描深度","最大指针偏移","文件保存位置","文件名","偏移量进制","写入完整模块路径"},
-{BaseConfig.depth,BaseConfig.maxOffset,BaseConfig.outputPath,BaseConfig.outputName,BaseConfig.offsetFormat or 10,BaseConfig.fullModulePath},
-{"","","path","text","","checkbox"})
+{"扫描深度","最大指针偏移","文件保存位置","文件名","偏移量进制","写入完整模块路径","扫描完成后恢复搜索列表(不恢复勾选状态)","写入指针层数"},
+{BaseConfig.depth,BaseConfig.maxOffset,BaseConfig.outputPath,BaseConfig.outputName,BaseConfig.offsetFormat or 10,BaseConfig.fullModulePath,BaseConfig.restoreResults,BaseConfig.writeDepth~=false},
+{"","","path","text","","checkbox","checkbox","checkbox"})
 if not a then return end
 local depth=tonumber(a[1])
 if not depth or depth<1 or depth%1~=0 then gg.alert("扫描深度必须是大于0的整数")return end
@@ -705,9 +799,11 @@ BaseConfig.outputPath=a[3]
 BaseConfig.outputName=a[4]
 BaseConfig.output=a[3]..a[4]
 BaseConfig.offsetFormat=radix
-BaseConfig.fullModulePath=a[6]==true end
+BaseConfig.fullModulePath=a[6]==true
+BaseConfig.restoreResults=a[7]==true
+BaseConfig.writeDepth=a[8]==true end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.5")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.6")end
 --====================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
