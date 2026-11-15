@@ -6,11 +6,11 @@ local function TypeName(f)return TypeNames[f]or"?"end
 local Config={listTypes={{gg.TYPE_DWORD,"D"},{gg.TYPE_FLOAT,"F"},{gg.TYPE_DOUBLE,"E"},{gg.TYPE_WORD,"W"},{gg.TYPE_BYTE,"B"},{gg.TYPE_QWORD,"Q"},{gg.TYPE_XOR,"X"}},
 DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true},
 format=1,distance=5000,path="/sdcard/",name="特征",file="/sdcard/特征",step=4,noComma=true}--保存HS2的输入
-local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard",ignore=""}--保存对比的输入
+local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard",ignore="",onlySameTypes=false}--保存HS1的输入
 local ListConfig={showState=false,showValues=false,maxCount=10000}--保存HS10的输入
 local FilterConfig={searchValue="",conditions="",replace=true,floatThreshold=0.001,useF=true,useE=true}--保存HS13的输入
 local BaseConfig={depth=1,maxOffset=65535,limit=1000000,offsetFormat=10,outputPath="/sdcard/",outputName="基址",output="/sdcard/基址",fullModulePath=false,restoreResults=false,writeDepth=false}--保存HS14的输入
-------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
 local function FormatListValue(value)
 if value==nil then return"?"end
 local s=tostring(value)
@@ -53,7 +53,7 @@ local f=io.open(newPath,"rb")
 if not f then return newPath end
 f:close()
 i=i+1 end end
---====================================================
+--==============================================================
 function SM(title,data,isMain)--增加一个函数"SM"用于优化菜单
 local menu={}
 for i,v in ipairs(data)do
@@ -62,7 +62,7 @@ if not isMain then menu[#menu+1]="回到主页"end--除了末尾有"true"以外�
 local s=gg.choice(menu,"",title)
 if s then
 if s<=#data then data[s][2]()else Main0()end end end--点击回到主页这个功能后回到Main0()
---====================================================
+--==============================================================
     function Main0()
 SM("",{
 {"数值选择",Main2},
@@ -181,7 +181,7 @@ for line in f:lines()do
 local text=line:match("^%s*(.-)%s*$")
 if text~=""and text:sub(1,1)~="#"then
 if text:sub(1,1)=="/"then kind="base"
-elseif text:match("[%a]+%[[^%]]+%]%s*$")then kind="feature"end break end end
+elseif text:match("%s+[^%s]+%[[^%]]+%]%s*$")then kind="feature"end break end end
 f:seek("set",pos)return kind end
 local fileType1=DetectCompareFile(f1)
 local fileType2=DetectCompareFile(f2)
@@ -300,15 +300,29 @@ local lower=value:lower()
 if lower=="nan"or lower=="+nan"or lower=="-nan"or lower=="inf"or lower=="+inf"or lower=="-inf"then return value..typ,typ end
 if value:match("^[+-]?%d+%.?%d*[eE][+-]?%d+$")or value:match("^[+-]?%d+%.?%d*$")or value:match("^[+-]?%d*%.%d+$")then return value..typ,typ end return nil end
 local function GetLineData(line)
-local range,rawOffset=line:match("([%a]+)%[([^%]]+)%]%s*$")--提取内存范围标记及偏移,支持A/O/V等范围
+local range,rawOffset=line:match("%s+([^%s]+)%[([^%]]+)%]%s*$")--提取内存范围标记及偏移,支持A/O/V等范围
 local offset=NormalizeOffset(rawOffset)
 if offset==nil then return nil,nil end--没有有效偏移量时跳过该行
 local values={}
-local body=line:gsub("%s+[%a]+%[[^%]]+%]%s*$","")--移除行尾内存范围标记
+local body=line:gsub("%s+[^%s]+%[[^%]]+%]%s*$","")--移除行尾内存范围标记
 body=body:match("^%s*%S+%s+(.+)$")or body
 for s in body:gmatch("[^;%s]+")do
 local token=GetValueToken(s)
 if token then values[token]=true end end return values,offset end
+local function FilterMatchedValues(line,values2)--仅保留文件2中数值和类型都相同的项目
+local suffixStart=line:find("%s+[^%s]+%[[^%]]+%]%s*$")
+if not suffixStart then return nil end
+local headAndValues=line:sub(1,suffixStart-1)
+local suffix=line:sub(suffixStart)
+local head,body=headAndValues:match("^(%s*%S+%s+)(.*)$")
+if not head then return nil end
+local kept={}
+for part in(body..";"):gmatch("(.-);")do
+local value=part:match("^%s*(.-)%s*$")
+local token=GetValueToken(value)
+if token and values2[token]then kept[#kept+1]=value end end
+if #kept==0 then return nil end
+return head..table.concat(kept,"  ;  ")..suffix end
 local ignoreAny={}
 local ignoreAnyText={}
 local ignoreType={D={},F={},E={},W={},B={},Q={},X={}}
@@ -365,14 +379,18 @@ if values2[token]then matchedTypes[token:sub(-1)]=true end end
 local types={}
 for _,typ in ipairs(order)do
 if matchedTypes[typ]then types[#types+1]=typ end end
-if #types>0 then out:write(line,table.concat(types,","),"\n")count=count+1 end end end
+if #types>0 then
+if CompareConfig.onlySameTypes then
+local filteredLine=FilterMatchedValues(line,values2)
+if filteredLine then out:write(filteredLine,"\n")count=count+1 end
+else out:write(line,table.concat(types,","),"\n")count=count+1 end end end end
 f1:close()out:close()
 gg.alert("文件1行数:"..count1.."\n文件2行数:"..count2.."\n保留:"..count.."行\n文件:"..file)end
     function HS6()
 local a=gg.prompt(
-{"特征对比忽略相同值(数值+数据类型;数值+数据类型,例如:0A;1D;5F)"},
-{CompareConfig.ignore or""},
-{""})
+{"特征对比忽略相同值(数值+数据类型;数值+数据类型,例如:0A;1D;5F)","特征对比仅保留相同的数据类型"},
+{CompareConfig.ignore or"",CompareConfig.onlySameTypes},
+{"","checkbox"})
 if not a then return end
 local validType={A=true,D=true,F=true,E=true,W=true,B=true,Q=true,X=true}
 for part in ((a[1]or"")..";"):gmatch("(.-);")do
@@ -383,7 +401,8 @@ local value=part:sub(1,-2):gsub(",","")
 local lower=value:lower()
 local validValue=tonumber(value)~=nil or lower=="nan"or lower=="+nan"or lower=="-nan"or lower=="inf"or lower=="+inf"or lower=="-inf"
 if not validType[typ]or value==""or not validValue then gg.alert("格式错误")return end end end
-CompareConfig.ignore=a[1]or""end
+CompareConfig.ignore=a[1]or""
+CompareConfig.onlySameTypes=a[2]==true end
     function Main1()
 SM("",{
 {"扫描",HS8},
@@ -391,7 +410,7 @@ SM("",{
 {"设置",HS2}
 })end
     function HS8()
-if not Selected then gg.alert("数值未选择")return end
+if not Selected then Main2()return end
 local types={}
 if Config.DataType.D then types[#types+1]={gg.TYPE_DWORD,"D"}end
 if Config.DataType.F then types[#types+1]={gg.TYPE_FLOAT,"F"}end
@@ -577,12 +596,11 @@ SM("",{
 {"设置",HS17}
 })end
     function HS14()
-if not Selected or not Selected.address then gg.alert("数值未选择")return end--只使用Main2选中的数值,不再读取GG勾选列表或要求手动指定模块
+if not Selected or not Selected.address then Main2()return end--只使用Main2选中的数值,不再读取GG勾选列表或要求手动指定模块
 local targetAddress=Selected.address
 local depth=BaseConfig.depth
 local maxOffset=BaseConfig.maxOffset
 local output=BaseConfig.output
-if not output or output==""then gg.alert("请先在基址设置中设置文件保存位置和文件名")return end
 output=GetUniqueFilePath(output)--文件已存在时防止重名
 local savedResults
 local savedResultCount=0
@@ -754,8 +772,7 @@ local writeOK,writeErr=f:write(table.concat(writeRows,"\n"),"\n")
 if not writeOK then failed="第"..level.."层基址写入失败:"..tostring(writeErr)break end end
 frontier=nextFrontier
 gg.toast(level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found,true)end
-local closeOK,closeErr=f:close()
-activeFile=nil
+local closeOK,closeErr=f:close()activeFile=nil
 if not closeOK then return false,"关闭基址文件失败:\n"..tostring(closeErr)end
 if failed then return false,"扫描中断:\n"..failed.."\n已找到:"..found.."条\n文件:"..output end
 return true,"找到:"..found.."条\n文件:"..output end
@@ -803,7 +820,7 @@ BaseConfig.fullModulePath=a[6]==true
 BaseConfig.restoreResults=a[7]==true
 BaseConfig.writeDepth=a[8]==true end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.6")end
---====================================================
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.7")end
+--==============================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
