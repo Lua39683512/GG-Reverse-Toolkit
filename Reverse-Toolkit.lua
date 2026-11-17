@@ -6,8 +6,8 @@ local function TypeName(f)return TypeNames[f]or"?"end
 local Config={listTypes={{gg.TYPE_DWORD,"D"},{gg.TYPE_FLOAT,"F"},{gg.TYPE_DOUBLE,"E"},{gg.TYPE_WORD,"W"},{gg.TYPE_BYTE,"B"},{gg.TYPE_QWORD,"Q"},{gg.TYPE_XOR,"X"}},
 DataType={D=true,F=true,E=true,Q=true,W=true,B=true,X=true},
 format=1,distance=5000,path="/sdcard/",name="特征",file="/sdcard/特征",step=4,noComma=true}--保存HS2的输入
-local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard",ignore="",onlySameTypes=false}--保存HS1的输入
-local ListConfig={showState=false,showValues=false,maxCount=10000}--保存HS10的输入
+local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard",ignore="",onlySameTypes=true}--保存HS1和BS6的输入
+local ListConfig={showState=false,showValues=false,maxCount=100,syncTypes="h,r,S,J,A,T,A8,D,F,E,W,B,Q,X"}--保存HS10的输入
 local FilterConfig={searchValue="",conditions="",replace=true,floatThreshold=0.001,useF=true,useE=true}--保存HS13的输入
 local BaseConfig={depth=1,maxOffset=65535,limit=1000000,offsetFormat=10,outputPath="/sdcard/",outputName="基址",output="/sdcard/基址",fullModulePath=false,restoreResults=false,writeDepth=false}--保存HS14的输入
 ----------------------------------------------------------------------------------------------------------------
@@ -51,8 +51,46 @@ while true do
 local newPath=path.."("..i..")"
 local f=io.open(newPath,"rb")
 if not f then return newPath end
-f:close()
-i=i+1 end end
+f:close()i=i+1 end end
+local SyncTypeInfo={
+h={code="h",kind="hex",flags=gg.TYPE_QWORD},
+r={code="r",kind="hex",flags=gg.TYPE_QWORD},
+S={code="S",kind="string",flags=gg.TYPE_BYTE},
+J={code="J",kind="utf16",flags=gg.TYPE_WORD},
+A={code="A",kind="asm",flags=gg.TYPE_DWORD,asm=gg.ASM_ARM},
+T={code="T",kind="asm",flags=gg.TYPE_DWORD,asm=gg.ASM_THUMB},
+A8={code="A8",kind="asm",flags=gg.TYPE_DWORD,asm=gg.ASM_ARM64},
+D={code="D",kind="number",flags=gg.TYPE_DWORD},
+F={code="F",kind="number",flags=gg.TYPE_FLOAT},
+E={code="E",kind="number",flags=gg.TYPE_DOUBLE},
+W={code="W",kind="number",flags=gg.TYPE_WORD},
+B={code="B",kind="number",flags=gg.TYPE_BYTE},
+Q={code="Q",kind="number",flags=gg.TYPE_QWORD},
+X={code="X",kind="number",flags=gg.TYPE_XOR}}
+local function ParseSyncTypes(text)
+local result={}
+local seen={}
+local function AddType(code)
+local info=SyncTypeInfo[code]
+if not info then return false end
+if not seen[code]then
+seen[code]=true
+result[#result+1]=info end
+return true
+end
+
+for part in(tostring(text or"")..","):gmatch("(.-),")do
+part=part:match("^%s*(.-)%s*$")
+if part~=""and not AddType(part)then
+return nil,"未知的数据格式:"..part
+end
+end
+
+if #result==0 then
+return nil,"至少需要填写一种数据格式"
+end
+return result
+end
 --==============================================================
 function SM(title,data,isMain)--增加一个函数"SM"用于优化菜单
 local menu={}
@@ -76,6 +114,7 @@ SM("",{
 SM("",{
 {"搜索列表",HS3},
 {"保存列表",HS4},
+{"同步列表",HS18},
 {"地址",HS5},
 {"设置",HS10}
 })end
@@ -119,14 +158,178 @@ if not detailed then gg.alert("读取详细数值失败:\n"..tostring(err))retur
 local list={}
 for i,v in ipairs(r)do
 local prefix=""
-if ListConfig.showState then
-prefix=(IsListSelected(selected,v)and"☑"or"☐")..tostring(v.freeze==true).."  "end
+if ListConfig.showState then prefix=(IsListSelected(selected,v)and"☑"or"☐")..tostring(v.freeze==true).."  "end
 local namePrefix=(v.name and v.name~="")and(v.name.."    ")or""
 local value=ListConfig.showValues and detailed[i]or FormatListValue(v.value)
 local valueType=ListConfig.showValues and""or("    "..TypeName(v.flags))
 list[i]=prefix..namePrefix..string.format("%X    %s%s    %s",v.address,value,valueType,ranges[i]or"?")end
 local s=gg.choice(list,nil,"")
 if not s then return end Selected=r[s]end
+    function HS18()
+local ok,selectedAddresses=pcall(gg.getSelectedElements)
+if not ok or type(selectedAddresses)~="table"then gg.alert("读取内存编辑器选中地址失败:\n"..tostring(selectedAddresses))return end
+if #selectedAddresses==0 then gg.alert("请在内存编辑器中选中至少1个地址")return end
+local types,err=ParseSyncTypes(ListConfig.syncTypes)
+if not types then gg.alert("同步列表格式错误:\n"..tostring(err))return end
+local maxCount=tonumber(ListConfig.maxCount)
+maxCount=math.floor(maxCount)
+local centerAddress
+if #selectedAddresses==1 then centerAddress=selectedAddresses[1]else
+local sum=0
+for i,address in ipairs(selectedAddresses)do
+if type(address)~="number"then gg.alert("选中地址存在无效数据:\n第"..i.."条")return end
+sum=sum+address end
+local average=sum/#selectedAddresses
+centerAddress=math.floor(average/4+0.5)*4 end
+if type(centerAddress)~="number"then gg.alert("无法计算读取中心地址")return end
+local count=maxCount
+local beforeCount=math.floor((count-1)/2)
+local startAddress=centerAddress-beforeCount
+local addresses={}
+for i=1,count do
+addresses[i]=startAddress+i-1 end
+local selectedMap={}
+if ListConfig.showState then
+for _,address in ipairs(selectedAddresses)do
+selectedMap[address]=true end end
+local rangeAddresses={}
+for i=1,count do
+if type(addresses[i])~="number"then gg.alert("存在无效地址:\n第"..i.."条")return end
+rangeAddresses[i]=addresses[i]end
+local rangesOK,ranges=pcall(gg.getValuesRange,rangeAddresses)
+if not rangesOK or type(ranges)~="table"then ranges={}end
+local function EncodeUTF8(n)
+if n<=0x7F then return string.char(n)
+elseif n<=0x7FF then return string.char(0xC0+math.floor(n/64),0x80+n%64)
+elseif n<=0xFFFF then return string.char(0xE0+math.floor(n/4096),0x80+math.floor(n/64)%64,0x80+n%64)
+else return string.char(0xF0+math.floor(n/262144),0x80+math.floor(n/4096)%64,0x80+math.floor(n/64)%64,0x80+n%64)end end
+local list={}
+local r={}
+local addressBatchSize=100
+local readBatchSize=999
+local stringLength=8
+local utf16Length=16
+for first=1,count,addressBatchSize do
+local last=math.min(first+addressBatchSize-1,count)
+local request={}
+local requestMap={}
+local function AddRead(address,flags)
+local key=tostring(address)..":"..tostring(flags)
+local index=requestMap[key]
+if not index then index=#request+1 request[index]={address=address,flags=flags}requestMap[key]=index end return index end
+for i=first,last do
+local address=addresses[i]
+local item={address=address,flags=types[1].flags,syncType=types[1].code,syncValues={},_reads={}}r[i]=item
+for _,v in ipairs(types)do
+if v.kind=="hex"then
+local indexes={}
+for n=0,7 do
+indexes[#indexes+1]=AddRead(address+n,gg.TYPE_BYTE)end
+item._reads[v.code]=indexes
+elseif v.kind=="string"then
+local indexes={}
+for n=0,stringLength-1 do
+indexes[#indexes+1]=AddRead(address+n,gg.TYPE_BYTE)end
+item._reads[v.code]=indexes
+elseif v.kind=="utf16"then
+local indexes={}
+for n=0,utf16Length-1 do
+indexes[#indexes+1]=AddRead(address+n*2,gg.TYPE_WORD)end
+item._reads[v.code]=indexes else item._reads[v.code]=AddRead(address,v.flags)end end end
+local readValues={}
+for start=1,#request,readBatchSize do
+local finish=math.min(start+readBatchSize-1,#request)
+local batch={}
+for i=start,finish do batch[#batch+1]=request[i]end
+local readOK,values=pcall(gg.getValues,batch)
+if not readOK or type(values)~="table"then gg.alert("同步列表读取数值失败:\n位置:"..start.."-"..finish.."\n"..tostring(values))return end
+for i=1,#batch do
+local v=values[i]
+readValues[start+i-1]=type(v)=="table"and v.value or nil end end
+local function ReadStringExpression(indexes)
+local chars={}
+for _,index in ipairs(indexes)do
+local n=tonumber(readValues[index])
+if n==nil then return"读取失败"end
+n=math.floor(n)%256
+if n>=32 and n<=126 then
+local c=string.char(n)
+if c=="'"or c=="\\"then c="\\"..c end
+chars[#chars+1]=c else chars[#chars+1]="."end end return"'"..table.concat(chars).."'"end
+local function ReadUTF16(indexes)
+local words={}
+local readAny=false
+for _,index in ipairs(indexes)do
+local n=tonumber(readValues[index])
+if n==nil then
+if not readAny then return "读取失败"end break end
+readAny=true
+n=math.floor(n)%65536
+if n==0 then break end
+words[#words+1]=n end
+local chars={}
+local i=1
+while i<=#words do
+local n=words[i]
+if n>=0xD800 and n<=0xDBFF then
+local low=words[i+1]
+if low and low>=0xDC00 and low<=0xDFFF then
+n=0x10000+(n-0xD800)*1024+(low-0xDC00)
+i=i+1 else n=0xFFFD end
+elseif n>=0xDC00 and n<=0xDFFF then n=0xFFFD end
+chars[#chars+1]=EncodeUTF8(n)i=i+1 end
+return string.format("%q",table.concat(chars))end
+local function FormatHex(indexes,code)
+local bytes={}
+for _,index in ipairs(indexes)do
+local n=tonumber(readValues[index])
+if n==nil then return"读取失败"end
+bytes[#bytes+1]=string.format("%02X",math.floor(n)%256)end
+if code=="r"then
+local reversed={}
+for i=#bytes,1,-1 do
+reversed[#reversed+1]=bytes[i]end
+bytes=reversed end return table.concat(bytes)..code end
+for i=first,last do
+local item=r[i]
+local parts={}
+local firstRaw
+local firstDisplay
+for j,v in ipairs(types)do
+local indexes=item._reads[v.code]
+local raw
+local display
+if v.kind=="hex"then display=FormatHex(indexes,v.code)
+elseif v.kind=="string"then display=ReadStringExpression(indexes)
+elseif v.kind=="utf16"then display=ReadUTF16(indexes)
+else raw=readValues[indexes]
+if raw==nil then display="读取失败"
+elseif v.kind=="asm"then
+local opcode=tonumber(raw)
+if opcode and opcode<0 then opcode=opcode+4294967296 end
+local disasmOK,result=false,nil
+if opcode then disasmOK,result=pcall(gg.disasm,v.asm,item.address,opcode)end
+display=disasmOK and tostring(result)or"反汇编失败"
+elseif v.kind=="number"then display=FormatListValue(raw)..v.code else display=tostring(raw)end end
+if j==1 then
+firstRaw=raw
+firstDisplay=display
+item.flags=v.flags
+item.syncType=v.code end
+item.syncValues[v.code]=display
+parts[#parts+1]=display end
+item.value=(types[1].kind=="string"or types[1].kind=="utf16")and firstDisplay or(firstRaw~=nil and firstRaw or firstDisplay)
+item.displayValue=firstDisplay
+item.range=ranges[i]or"?"
+item._reads=nil
+local prefix=""
+if ListConfig.showState then
+local checked=selectedMap[item.address]==true
+prefix=(checked and"☑"or"☐").."  "end
+list[i]=prefix..string.format("%X    %s    %s",item.address,table.concat(parts,";  "),item.range)end end
+local s=gg.choice(list,nil,"")
+if not s then return end
+Selected=r[s]end
     function HS5()
 local a=gg.prompt({""},{},{""})
 if not a then return end
@@ -138,17 +341,21 @@ if not address then gg.alert("格式错误")return end
 Selected={address=address}end
      function HS10()
 local a=gg.prompt(
-{"显示勾选与冻结状态","数值详细显示","列表读取数量≤","地址进制"},
-{ListConfig.showState,ListConfig.showValues,tostring(ListConfig.maxCount),addressFormat==1 and 16 or 10},
-{"checkbox","checkbox","",""})
+{"显示勾选与冻结状态","数值详细显示","列表读取数量≤","地址进制","同步列表读取的数值格式"},
+{ListConfig.showState,ListConfig.showValues,tostring(ListConfig.maxCount),addressFormat==1 and 16 or 10,ListConfig.syncTypes},
+{"checkbox","checkbox","","",""})
 if not a then return end
 local maxCount=tonumber(a[3])
 if not maxCount or maxCount<1 or maxCount%1~=0 then gg.alert("列表读取数量必须是大于0的整数")return end
 local radix=tonumber(a[4])
 if radix~=16 and radix~=10 then gg.alert("地址进制只能是10或16")return end
+if not a[5]or a[5]==""then gg.alert("同步列表读取的数值格式不可为空")return end
+local syncTypes,err=ParseSyncTypes(a[5])
+if not syncTypes then gg.alert("同步列表读取的数值格式错误:\n"..tostring(err))return end
 ListConfig.showState=a[1]
 ListConfig.showValues=a[2]
 ListConfig.maxCount=maxCount
+ListConfig.syncTypes=a[5]
 addressFormat=radix==16 and 1 or 2 end
     function Main3()
 SM("",{
@@ -649,22 +856,19 @@ for first=1,#savedResults,batchSize do
 local last=math.min(first+batchSize-1,#savedResults)
 local request={}
 for i=first,last do
-local v=savedResults[i]
-request[#request+1]={address=v.address,flags=v.flags}end
+local v=savedResults[i]request[#request+1]={address=v.address,flags=v.flags}end
 local readOK,values=pcall(gg.getValues,request)
 if readOK and type(values)=="table"then
 for i=1,#request do
 local current=values[i]
 local saved=savedResults[first+i-1]
-if type(current)=="table"and current.value~=nil and current.address==saved.address and current.flags==saved.flags then
-saved.value=current.value refreshedCount=refreshedCount+1
+if type(current)=="table"and current.value~=nil and current.address==saved.address and current.flags==saved.flags then saved.value=current.value refreshedCount=refreshedCount+1
 else staleCount=staleCount+1 end end
 else staleCount=staleCount+(last-first+1)end end
 local loadOK,loadResult=pcall(gg.loadResults,savedResults)
 if not loadOK or loadResult~=true then return false,"重新加载搜索列表失败:"..tostring(loadResult)end
 local message="搜索列表已恢复:"..#savedResults.."条\n已更新数值:"..refreshedCount.."条"
-if staleCount>0 then message=message.."\n无法重新读取:"..staleCount.."条(保留扫描前数值)"end
-return true,message end
+if staleCount>0 then message=message.."\n无法重新读取:"..staleCount.."条(保留扫描前数值)"end return true,message end
 local function Scan()
 local ok,ranges=pcall(gg.getRangesList)--获取当前进程的全部命名内存映射,后续自动判断基址属于哪个模块
 if not ok or type(ranges)~="table"then return false,"获取内存映射失败:\n"..tostring(ranges)end
@@ -707,8 +911,8 @@ while low<=high do
 local mid=math.floor((low+high)/2)
 if nodes[mid].address<value then low=mid+1 else high=mid-1 end end
 local left,right=low-1,low
-local leftDistance=left>=1 and math.abs(nodes[left].address-value)or math.huge
-local rightDistance=right<=#nodes and math.abs(nodes[right].address-value)or math.huge
+local leftDistance=left>=1 and value-nodes[left].address or math.huge
+local rightDistance=right<=#nodes and nodes[right].address-value or math.huge
 if leftDistance>maxOffset and rightDistance>maxOffset then return end return left,right,leftDistance,rightDistance end
 local frontier=seedFrontier
 local found=0
@@ -716,8 +920,7 @@ local foundMap={}
 local failed
 for level=1,depth do
 offsetCache={}
-if #frontier==0 then break end
-table.sort(frontier,function(x,y)return x.address<y.address end)--按地址排序,便于通过指针值快速定位上一层节点
+if #frontier==0 then break end--按地址排序,便于通过指针值快速定位上一层节点
 local seed={}
 for i,v in ipairs(frontier)do
 seed[i]={address=v.address,flags=pointerFlag}end
@@ -733,6 +936,8 @@ if type(current)~="table"then failed="读取第"..level.."层搜索结果失败"
 local nextFrontier={}
 local nextSeen={}
 local writeRows={}
+local nextFrontierSorted=true
+local lastNextAddress
 for _,v in ipairs(current)do
 local value=tonumber(v.value)
 if value and v.address then
@@ -744,32 +949,40 @@ else left,right,leftDistance,rightDistance=FindParentBounds(frontier,value)
 if left~=nil then module=FindModule(v.address)end end
 if left~=nil then
 local modulePrefix
+local moduleSeen
+local moduleOffset
+if module then moduleOffset=v.address-module.base
+local moduleOffsets=foundMap[module.name]
+if not moduleOffsets then moduleOffsets={}foundMap[module.name]=moduleOffsets end
+moduleSeen=moduleOffsets[moduleOffset]
+if not moduleSeen then moduleSeen={}moduleOffsets[moduleOffset]=moduleSeen end end
 if module then
 local moduleName=module.name
 if not BaseConfig.fullModulePath then moduleName=moduleName:match("([^/]+)$")or moduleName end
-modulePrefix=moduleName.."|"..FormatBaseOffset(v.address-module.base).."|"end
+modulePrefix=moduleName.."|"..FormatBaseOffset(moduleOffset).."|"end
+local seen
+if #nextFrontier<BaseConfig.limit then seen=nextSeen[v.address]
+if not seen then seen={}nextSeen[v.address]=seen end end
 local parentCount=0
 while parentCount<99 and (module or #nextFrontier<BaseConfig.limit) and (leftDistance<=maxOffset or rightDistance<=maxOffset) do
 local parent
-if leftDistance<=rightDistance then parent=frontier[left]left=left-1 leftDistance=left>=1 and math.abs(frontier[left].address-value)or math.huge
-else parent=frontier[right]right=right+1 rightDistance=right<=#frontier and math.abs(frontier[right].address-value)or math.huge end
+if leftDistance<=rightDistance then parent=frontier[left]left=left-1 leftDistance=left>=1 and value-frontier[left].address or math.huge
+else parent=frontier[right]right=right+1 rightDistance=right<=#frontier and frontier[right].address-value or math.huge end
 parentCount=parentCount+1
 local offset=parent.address-value
 local offsetText=FormatBaseOffset(offset)
 local parentChain=parent.chainText
 local chainText=parentChain==""and offsetText or offsetText..","..parentChain
-if module then
+if module and not moduleSeen[chainText]then moduleSeen[chainText]=true
 local row=modulePrefix..chainText
-if BaseConfig.writeDepth then row=row.."|"..level end
-local key=module.name.."|"..chainText.."|"..level
-if not foundMap[key]then foundMap[key]=true writeRows[#writeRows+1]=row found=found+1 end end
-if #nextFrontier<BaseConfig.limit then
-local seen=nextSeen[v.address]
-if not seen then seen={}nextSeen[v.address]=seen end
-if not seen[chainText]then seen[chainText]=true nextFrontier[#nextFrontier+1]={address=v.address,chainText=chainText}end end end end end end
+if BaseConfig.writeDepth then row=row.."|"..level end writeRows[#writeRows+1]=row found=found+1 end
+if #nextFrontier<BaseConfig.limit and not seen[chainText]then seen[chainText]=true
+if lastNextAddress and v.address<lastNextAddress then nextFrontierSorted=false end
+lastNextAddress=v.address nextFrontier[#nextFrontier+1]={address=v.address,chainText=chainText}end end end end end
 if #writeRows>0 then
 local writeOK,writeErr=f:write(table.concat(writeRows,"\n"),"\n")
 if not writeOK then failed="第"..level.."层基址写入失败:"..tostring(writeErr)break end end
+if not nextFrontierSorted then table.sort(nextFrontier,function(x,y)return x.address<y.address end)end
 frontier=nextFrontier
 gg.toast(level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found,true)end
 local closeOK,closeErr=f:close()activeFile=nil
@@ -820,7 +1033,7 @@ BaseConfig.fullModulePath=a[6]==true
 BaseConfig.restoreResults=a[7]==true
 BaseConfig.writeDepth=a[8]==true end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.7")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.8")end
 --==============================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
