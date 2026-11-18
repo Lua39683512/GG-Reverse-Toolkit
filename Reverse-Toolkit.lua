@@ -24,6 +24,7 @@ if v.address~=nil then
 if v.flags~=nil then selected[tostring(v.address)..":"..tostring(v.flags)]=true else selected[tostring(v.address)]=true end end end return selected end
 local function IsListSelected(selected,v)
 if v.flags~=nil then return selected[tostring(v.address)..":"..tostring(v.flags)]==true end return selected[tostring(v.address)]==true end
+----------------------------------------------------------------------------------------------------------------
 local function GetDetailedValues(items)
 local detailed={}
 local batchSize=999
@@ -52,6 +53,7 @@ local newPath=path.."("..i..")"
 local f=io.open(newPath,"rb")
 if not f then return newPath end
 f:close()i=i+1 end end
+----------------------------------------------------------------------------------------------------------------
 local SyncTypeInfo={
 h={code="h",kind="hex",flags=gg.TYPE_QWORD},
 r={code="r",kind="hex",flags=gg.TYPE_QWORD},
@@ -73,24 +75,12 @@ local seen={}
 local function AddType(code)
 local info=SyncTypeInfo[code]
 if not info then return false end
-if not seen[code]then
-seen[code]=true
-result[#result+1]=info end
-return true
-end
-
+if not seen[code]then seen[code]=true result[#result+1]=info end
+return true end
 for part in(tostring(text or"")..","):gmatch("(.-),")do
 part=part:match("^%s*(.-)%s*$")
-if part~=""and not AddType(part)then
-return nil,"未知的数据格式:"..part
-end
-end
-
-if #result==0 then
-return nil,"至少需要填写一种数据格式"
-end
-return result
-end
+if part~=""and not AddType(part)then return nil,"未知的数据格式:"..part end end
+if #result==0 then return nil,"至少需要填写一种数据格式"end return result end
 --==============================================================
 function SM(title,data,isMain)--增加一个函数"SM"用于优化菜单
 local menu={}
@@ -337,7 +327,7 @@ local address
 if addressFormat==1 then address=tonumber(a[1],16)else
 local s=a[1]:gsub("^0[xX]","")
 address=tonumber(s,10)end
-if not address then gg.alert("格式错误")return end
+if not address then gg.alert("格式错误")HS5()return end
 Selected={address=address}end
      function HS10()
 local a=gg.prompt(
@@ -348,10 +338,10 @@ if not a then return end
 local maxCount=tonumber(a[3])
 if not maxCount or maxCount<1 or maxCount%1~=0 then gg.alert("列表读取数量必须是大于0的整数")return end
 local radix=tonumber(a[4])
-if radix~=16 and radix~=10 then gg.alert("地址进制只能是10或16")return end
-if not a[5]or a[5]==""then gg.alert("同步列表读取的数值格式不可为空")return end
+if radix~=16 and radix~=10 then gg.alert("地址进制只能是10或16")HS10()return end
+if not a[5]or a[5]==""then gg.alert("同步列表读取的数值格式不可为空")HS10()return end
 local syncTypes,err=ParseSyncTypes(a[5])
-if not syncTypes then gg.alert("同步列表读取的数值格式错误:\n"..tostring(err))return end
+if not syncTypes then gg.alert("同步列表读取的数值格式错误:\n"..tostring(err))HS10()return end
 ListConfig.showState=a[1]
 ListConfig.showValues=a[2]
 ListConfig.maxCount=maxCount
@@ -368,10 +358,10 @@ local a=gg.prompt(
 {CompareConfig.file1,CompareConfig.file2,CompareConfig.name,CompareConfig.path},
 {"file","file","text","path"})
 if not a then return end
-if not a[1]or a[1]==""then gg.alert("文件1不可为空")return end
-if not a[2]or a[2]==""then gg.alert("文件2不可为空")return end
-if not a[3]or a[3]==""then gg.alert("文件名不可为空")return end
-if not a[4]or a[4]==""then gg.alert("保存位置不可为空")return end
+if not a[1]or a[1]==""then gg.alert("文件1不可为空")HS1()return end
+if not a[2]or a[2]==""then gg.alert("文件2不可为空")HS1()return end
+if not a[3]or a[3]==""then gg.alert("文件名不可为空")HS1()return end
+if not a[4]or a[4]==""then gg.alert("保存位置不可为空")HS1()return end
 CompareConfig.file1=a[1]
 CompareConfig.file2=a[2]
 CompareConfig.name=a[3]
@@ -607,7 +597,7 @@ local typ=part:sub(-1):upper()
 local value=part:sub(1,-2):gsub(",","")
 local lower=value:lower()
 local validValue=tonumber(value)~=nil or lower=="nan"or lower=="+nan"or lower=="-nan"or lower=="inf"or lower=="+inf"or lower=="-inf"
-if not validType[typ]or value==""or not validValue then gg.alert("格式错误")return end end end
+if not validType[typ]or value==""or not validValue then gg.alert("格式错误")HS6()return end end end
 CompareConfig.ignore=a[1]or""
 CompareConfig.onlySameTypes=a[2]==true end
     function Main1()
@@ -617,7 +607,7 @@ SM("",{
 {"设置",HS2}
 })end
     function HS8()
-if not Selected then Main2()return end
+if not Selected then gg.alert("数值未选择")Main2()return end
 local types={}
 if Config.DataType.D then types[#types+1]={gg.TYPE_DWORD,"D"}end
 if Config.DataType.F then types[#types+1]={gg.TYPE_FLOAT,"F"}end
@@ -712,7 +702,6 @@ if s:match("^0[xX]")then n=tonumber(s:sub(3),16)else n=tonumber(s)end
 if not n or n%1~=0 then return nil end return sign*n end
 local searchValue,searchFlag=ParseTypedValue(a[1])
 if not searchValue then gg.alert("搜索值格式错误,请使用5F等格式")return end
-if not a[2] or Trim(a[2])==""then gg.alert("过滤条件不可为空")return end
 local conditions={}--解析过滤条件
 for part in (a[2]..";"):gmatch("(.-);")do
 if Trim(part)~=""then
@@ -724,7 +713,6 @@ if offset==nil then gg.alert("偏移量格式错误:\n"..offsetText)return end
 local value,flag,target,typ=ParseTypedValue(typedText)
 if not value then gg.alert("过滤数值格式错误:\n"..typedText)return end
 conditions[#conditions+1]={offset=offset,flag=flag,target=target,typ=typ}end end
-if #conditions==0 then gg.alert("至少需要1个过滤条件")return end
 gg.clearResults()gg.searchNumber(searchValue,searchFlag)--搜索指定数值
 local total=gg.getResultsCount()
 if total==0 then gg.alert("没有搜索到结果")return end
@@ -777,16 +765,16 @@ if not a then return end
 local selectedTypes={}
 for part in (tostring(a[1]or"")..","):gmatch("(.-),")do
 part=part:match("^%s*(.-)%s*$"):upper()
-if not validTypes[part]then gg.alert("数据类型格式错误")return end selectedTypes[part]=true end
-if not next(selectedTypes)then gg.alert("至少选择一种数据类型")return end
+if not validTypes[part]then gg.alert("数据类型格式错误")HS2()return end selectedTypes[part]=true end
+if not next(selectedTypes)then gg.alert("至少选择一种数据类型")HS2()return end
 local radix=tonumber(a[2])
-if radix~=10 and radix~=16 then gg.alert("偏移量进制只能是10或16")return end
+if radix~=10 and radix~=16 then gg.alert("偏移量进制只能是10或16")HS2()return end
 local distance=tonumber(a[3])
-if not distance or distance<0 or distance%1~=0 then gg.alert("特征距离必须是不小于0的整数")return end
+if not distance or distance<0 or distance%1~=0 then gg.alert("特征距离必须是不小于0的整数")HS2()return end
 local step=tonumber(a[6])
-if not step or step<1 or step%1~=0 then gg.alert("地址距离必须是大于0的整数")return end
-if not a[4]or a[4]==""then gg.alert("保存位置不可为空")return end
-if not a[5]or a[5]==""then gg.alert("文件名不可为空")return end
+if not step or step<1 or step%1~=0 then gg.alert("地址距离必须是大于0的整数")HS2()return end
+if not a[4]or a[4]==""then gg.alert("保存位置不可为空")HS2()return end
+if not a[5]or a[5]==""then gg.alert("文件名不可为空")HS2()return end
 if a[4]:sub(-1)~="/"then a[4]=a[4].."/"end
 for typ in typeOrder[1]:gmatch("[^,]+")do
 Config.DataType[typ]=selectedTypes[typ]==true end
@@ -803,7 +791,7 @@ SM("",{
 {"设置",HS17}
 })end
     function HS14()
-if not Selected or not Selected.address then Main2()return end--只使用Main2选中的数值,不再读取GG勾选列表或要求手动指定模块
+if not Selected or not Selected.address then gg.alert("数值未选择")Main2()return end--只使用Main2选中的数值,不再读取GG勾选列表或要求手动指定模块
 local targetAddress=Selected.address
 local depth=BaseConfig.depth
 local maxOffset=BaseConfig.maxOffset
@@ -1015,13 +1003,13 @@ local a=gg.prompt(
 {"","","path","text","","checkbox","checkbox","checkbox"})
 if not a then return end
 local depth=tonumber(a[1])
-if not depth or depth<1 or depth%1~=0 then gg.alert("扫描深度必须是大于0的整数")return end
+if not depth or depth<1 or depth%1~=0 then gg.alert("扫描深度必须是大于0的整数")HS17()return end
 local maxOffset=tonumber(a[2])
-if not maxOffset or maxOffset<1 or maxOffset%1~=0 then gg.alert("最大指针偏移必须是大于0的整数")return end
-if not a[3]or a[3]==""then gg.alert("基址文件保存位置不可为空")return end
-if not a[4]or a[4]==""then gg.alert("基址文件名不可为空")return end
+if not maxOffset or maxOffset<1 or maxOffset%1~=0 then gg.alert("最大指针偏移必须是大于0的整数")HS17()return end
+if not a[3]or a[3]==""then gg.alert("基址文件保存位置不可为空")HS17()return end
+if not a[4]or a[4]==""then gg.alert("基址文件名不可为空")HS17()return end
 local radix=tonumber(a[5])
-if radix~=10 and radix~=16 then gg.alert("偏移量进制只能是10或16")return end
+if radix~=10 and radix~=16 then gg.alert("偏移量进制只能是10或16")HS17()return end
 if a[3]:sub(-1)~="/"then a[3]=a[3].."/"end
 BaseConfig.depth=depth
 BaseConfig.maxOffset=maxOffset
