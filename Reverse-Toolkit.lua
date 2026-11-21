@@ -164,20 +164,22 @@ if not types then gg.alert("同步列表格式错误:\n"..tostring(err))return e
 local maxCount=tonumber(ListConfig.maxCount)
 maxCount=math.floor(maxCount)
 local centerAddress
-if #selectedAddresses==1 then centerAddress=selectedAddresses[1]else
+if #selectedAddresses==1 then
+local address=selectedAddresses[1]
+if type(address)~="number"then gg.alert("选中地址存在无效数据")return end
+centerAddress=math.floor(address/4+0.5)*4 else
 local sum=0
 for i,address in ipairs(selectedAddresses)do
 if type(address)~="number"then gg.alert("选中地址存在无效数据:\n第"..i.."条")return end
 sum=sum+address end
-local average=sum/#selectedAddresses
-centerAddress=math.floor(average/4+0.5)*4 end
+local average=sum/#selectedAddresses centerAddress=math.floor(average/4+0.5)*4 end
 if type(centerAddress)~="number"then gg.alert("无法计算读取中心地址")return end
 local count=maxCount
 local beforeCount=math.floor((count-1)/2)
-local startAddress=centerAddress-beforeCount
+local startAddress=centerAddress-beforeCount*4
 local addresses={}
 for i=1,count do
-addresses[i]=startAddress+i-1 end
+addresses[i]=startAddress+(i-1)*4 end
 local selectedMap={}
 if ListConfig.showState then
 for _,address in ipairs(selectedAddresses)do
@@ -263,9 +265,7 @@ while i<=#words do
 local n=words[i]
 if n>=0xD800 and n<=0xDBFF then
 local low=words[i+1]
-if low and low>=0xDC00 and low<=0xDFFF then
-n=0x10000+(n-0xD800)*1024+(low-0xDC00)
-i=i+1 else n=0xFFFD end
+if low and low>=0xDC00 and low<=0xDFFF then n=0x10000+(n-0xD800)*1024+(low-0xDC00)i=i+1 else n=0xFFFD end
 elseif n>=0xDC00 and n<=0xDFFF then n=0xFFFD end
 chars[#chars+1]=EncodeUTF8(n)i=i+1 end
 return string.format("%q",table.concat(chars))end
@@ -607,7 +607,8 @@ SM("",{
 {"设置",HS2}
 })end
     function HS8()
-if not Selected then gg.alert("数值未选择")Main2()return end
+if not Selected or not Selected.address then gg.alert("数值未选择")Main2()
+if not Selected or not Selected.address then return end end
 local types={}
 if Config.DataType.D then types[#types+1]={gg.TYPE_DWORD,"D"}end
 if Config.DataType.F then types[#types+1]={gg.TYPE_FLOAT,"F"}end
@@ -791,7 +792,8 @@ SM("",{
 {"设置",HS17}
 })end
     function HS14()
-if not Selected or not Selected.address then gg.alert("数值未选择")Main2()return end--只使用Main2选中的数值,不再读取GG勾选列表或要求手动指定模块
+if not Selected or not Selected.address then gg.alert("数值未选择")Main2()
+if not Selected or not Selected.address then return end end--只使用Main2选中的数值,不再读取GG勾选列表或要求手动指定模块
 local targetAddress=Selected.address
 local depth=BaseConfig.depth
 local maxOffset=BaseConfig.maxOffset
@@ -1021,7 +1023,7 @@ BaseConfig.fullModulePath=a[6]==true
 BaseConfig.restoreResults=a[7]==true
 BaseConfig.writeDepth=a[8]==true end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.2.9")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.3.0")end
 --==============================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
