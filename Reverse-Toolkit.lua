@@ -9,7 +9,7 @@ format=1,distance=5000,path="/sdcard/",name="特征",file="/sdcard/特征",step=
 local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/sdcard",ignore="",onlySameTypes=true}--保存HS1和BS6的输入
 local ListConfig={showState=false,showValues=false,maxCount=100,syncTypes="h,r,S,J,A,T,A8,D,F,E,W,B,Q,X"}--保存HS10的输入
 local FilterConfig={searchValue="",conditions="",replace=true,floatThreshold=0.001,useF=true,useE=true}--保存HS13的输入
-local BaseConfig={depth=1,maxOffset=65535,limit=1000000,offsetFormat=10,outputPath="/sdcard/",outputName="基址",output="/sdcard/基址",fullModulePath=false,restoreResults=false,writeDepth=false}--保存HS14的输入
+local BaseConfig={depth=1,maxOffset=65535,limit=1000000,offsetFormat=10,outputPath="/sdcard/",outputName="基址",output="/sdcard/基址",fullModulePath=false,restoreResults=false,writeDepth=false,showTime=false}--保存HS14的输入
 ----------------------------------------------------------------------------------------------------------------
 local function FormatListValue(value)
 if value==nil then return"?"end
@@ -794,6 +794,12 @@ SM("",{
     function HS14()
 if not Selected or not Selected.address then gg.alert("数值未选择")Main2()
 if not Selected or not Selected.address then return end end--只使用Main2选中的数值,不再读取GG勾选列表或要求手动指定模块
+local totalStart=os.clock()
+local debugEnabled=BaseConfig.showTime==true
+local debugStats
+if debugEnabled then debugStats={layers={},totalSearchTime=0,totalFindTime=0,totalWriteTime=0,totalCandidates=0,totalProcessed=0,totalFound=0,fileInitTime=0,fileCloseTime=0,totalWriteRows=0}end
+local function FormatDebugMs(seconds)
+return string.format("%.0f",(seconds or 0)*1000).."ms"end
 local targetAddress=Selected.address
 local depth=BaseConfig.depth
 local maxOffset=BaseConfig.maxOffset
@@ -879,12 +885,22 @@ while low<=high do
 local mid=math.floor((low+high)/2)
 local v=moduleRanges[mid]
 if address<v.start then high=mid-1 elseif address>=v.finish then low=mid+1 else return v.module end end return nil end
+local fileInitStart=debugEnabled and os.clock()or nil
 local f=io.open(output,"w")
-if not f then return false,"无法创建文件:\n"..output end
+if not f then
+if debugEnabled then
+local elapsed=os.clock()-fileInitStart debugStats.fileInitTime=elapsed debugStats.totalWriteTime=debugStats.totalWriteTime+elapsed end
+return false,"无法创建文件:\n"..output end
 activeFile=f
 if not BaseConfig.fullModulePath then
 local markerOK,markerErr=f:write("/\n")
-if not markerOK then f:close()activeFile=nil return false,"写入基址文件标识失败:\n"..tostring(markerErr)end end
+if not markerOK then
+f:close()activeFile=nil
+if debugEnabled then
+local elapsed=os.clock()-fileInitStart debugStats.fileInitTime=elapsed debugStats.totalWriteTime=debugStats.totalWriteTime+elapsed end
+return false,"写入基址文件标识失败:\n"..tostring(markerErr)end end
+if debugEnabled then
+local elapsed=os.clock()-fileInitStart debugStats.fileInitTime=elapsed debugStats.totalWriteTime=debugStats.totalWriteTime+elapsed end
 local info=gg.getTargetInfo()or{}
 local pointerFlag=info.x64 and gg.TYPE_QWORD or gg.TYPE_DWORD
 local seedFrontier={{address=targetAddress,chainText=""}}
@@ -909,20 +925,39 @@ local found=0
 local foundMap={}
 local failed
 for level=1,depth do
-offsetCache={}
-if #frontier==0 then break end--按地址排序,便于通过指针值快速定位上一层节点
+if #frontier==0 then break end
+local layerStats
+if debugEnabled then layerStats={level=level,targets=#frontier,uniqueTargets=0,candidates=0,processed=0,found=0,writeRows=0,loadTime=0,pointerSearchTime=0,resultReadTime=0,searchTime=0,findTime=0,writeTime=0}debugStats.layers[#debugStats.layers+1]=layerStats end
+local searchStart=debugEnabled and os.clock()or nil
 local seed={}
-for i,v in ipairs(frontier)do
-seed[i]={address=v.address,flags=pointerFlag}end
+local seedSeen={}
+for _,v in ipairs(frontier)do
+if not seedSeen[v.address]then seedSeen[v.address]=true seed[#seed+1]={address=v.address,flags=pointerFlag}end end
+if debugEnabled then layerStats.uniqueTargets=#seed end
 gg.clearResults()
 local loadOK,result=pcall(gg.loadResults,seed)
-if not loadOK or result==false or type(result)=="string"then failed="加载第"..level.."层搜索目标失败:"..tostring(result)break end
+if not loadOK or result==false or type(result)=="string"then
+if debugEnabled then layerStats.loadTime=os.clock()-searchStart layerStats.searchTime=layerStats.loadTime debugStats.totalSearchTime=debugStats.totalSearchTime+layerStats.searchTime end
+failed="加载第"..level.."层搜索目标失败:"..tostring(result)break end
+if debugEnabled then layerStats.loadTime=os.clock()-searchStart end
+local pointerSearchStart=debugEnabled and os.clock()or nil
 local searchOK,searchResult=pcall(gg.searchPointer,maxOffset,0,-1,BaseConfig.limit)
-if not searchOK or searchResult~=true then failed="第"..level.."层指针搜索失败:"..tostring(searchResult)break end
+if debugEnabled then layerStats.pointerSearchTime=os.clock()-pointerSearchStart end
+if not searchOK or searchResult~=true then
+if debugEnabled then layerStats.searchTime=layerStats.loadTime+layerStats.pointerSearchTime debugStats.totalSearchTime=debugStats.totalSearchTime+layerStats.searchTime end
+failed="第"..level.."层指针搜索失败:"..tostring(searchResult)break end
+local resultReadStart=debugEnabled and os.clock()or nil
 local count=gg.getResultsCount()
-if count==0 then break end
+if debugEnabled then layerStats.candidates=count debugStats.totalCandidates=debugStats.totalCandidates+count end
+if count==0 then
+if debugEnabled then layerStats.resultReadTime=os.clock()-resultReadStart layerStats.searchTime=layerStats.loadTime+layerStats.pointerSearchTime+layerStats.resultReadTime debugStats.totalSearchTime=debugStats.totalSearchTime+layerStats.searchTime end break end
 local current=gg.getResults(math.min(count,BaseConfig.limit))
-if type(current)~="table"then failed="读取第"..level.."层搜索结果失败"break end
+if type(current)~="table"then
+if debugEnabled then layerStats.resultReadTime=os.clock()-resultReadStart layerStats.searchTime=layerStats.loadTime+layerStats.pointerSearchTime+layerStats.resultReadTime debugStats.totalSearchTime=debugStats.totalSearchTime+layerStats.searchTime end
+failed="读取第"..level.."层搜索结果失败"break end
+if debugEnabled then layerStats.processed=#current debugStats.totalProcessed=debugStats.totalProcessed+#current layerStats.resultReadTime=os.clock()-resultReadStart layerStats.searchTime=layerStats.loadTime+layerStats.pointerSearchTime+layerStats.resultReadTime debugStats.totalSearchTime=debugStats.totalSearchTime+layerStats.searchTime end
+local findStart=debugEnabled and os.clock()or nil
+local layerFound=0
 local nextFrontier={}
 local nextSeen={}
 local writeRows={}
@@ -965,22 +1000,39 @@ local parentChain=parent.chainText
 local chainText=parentChain==""and offsetText or offsetText..","..parentChain
 if module and not moduleSeen[chainText]then moduleSeen[chainText]=true
 local row=modulePrefix..chainText
-if BaseConfig.writeDepth then row=row.."|"..level end writeRows[#writeRows+1]=row found=found+1 end
+if BaseConfig.writeDepth then row=row.."|"..level end writeRows[#writeRows+1]=row found=found+1
+if debugEnabled then layerFound=layerFound+1 end end
 if #nextFrontier<BaseConfig.limit and not seen[chainText]then seen[chainText]=true
 if lastNextAddress and v.address<lastNextAddress then nextFrontierSorted=false end
 lastNextAddress=v.address nextFrontier[#nextFrontier+1]={address=v.address,chainText=chainText}end end end end end
-if #writeRows>0 then
-local writeOK,writeErr=f:write(table.concat(writeRows,"\n"),"\n")
-if not writeOK then failed="第"..level.."层基址写入失败:"..tostring(writeErr)break end end
 if not nextFrontierSorted then table.sort(nextFrontier,function(x,y)return x.address<y.address end)end
 frontier=nextFrontier
-gg.toast(level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found,true)end
+if debugEnabled then layerStats.found=layerFound layerStats.findTime=os.clock()-findStart debugStats.totalFindTime=debugStats.totalFindTime+layerStats.findTime debugStats.totalFound=found debugStats.totalWriteRows=debugStats.totalWriteRows+#writeRows end
+local writeStart=debugEnabled and os.clock()or nil
+local writeOK,writeErr=true,nil
+if #writeRows>0 then writeOK,writeErr=f:write(table.concat(writeRows,"\n"),"\n")end
+if debugEnabled then layerStats.writeRows=#writeRows layerStats.writeTime=os.clock()-writeStart debugStats.totalWriteTime=debugStats.totalWriteTime+layerStats.writeTime end
+if not writeOK then failed="第"..level.."层基址写入失败:"..tostring(writeErr)break end
+local progress
+if debugEnabled then progress=level.."/"..depth.."层|本层目标:"..layerStats.targets.."("..layerStats.uniqueTargets.."唯一)|下一层目标:"..#frontier.."|候选:"..count.."("..debugStats.totalCandidates..")|找到:"..layerFound.."("..found..")"progress=progress.."|搜索:"..FormatDebugMs(layerStats.searchTime).."|找基址:"..FormatDebugMs(layerStats.findTime).."|写入:"..FormatDebugMs(layerStats.writeTime)else progress=level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found end
+gg.toast(progress,true)end
+local closeStart=debugEnabled and os.clock()or nil
 local closeOK,closeErr=f:close()activeFile=nil
+if debugEnabled then
+local elapsed=os.clock()-closeStart
+debugStats.fileCloseTime=elapsed
+debugStats.totalWriteTime=debugStats.totalWriteTime+elapsed end
 if not closeOK then return false,"关闭基址文件失败:\n"..tostring(closeErr)end
 if failed then return false,"扫描中断:\n"..failed.."\n已找到:"..found.."条\n文件:"..output end
 return true,"找到:"..found.."条\n文件:"..output end
 local scanCallOK,scanSuccess,scanMessage=pcall(Scan)
-if activeFile then pcall(activeFile.close,activeFile)activeFile=nil end
+if activeFile then
+local closeStart=debugEnabled and os.clock()or nil
+pcall(activeFile.close,activeFile)activeFile=nil
+if debugEnabled then
+local elapsed=os.clock()-closeStart
+debugStats.fileCloseTime=debugStats.fileCloseTime+elapsed
+debugStats.totalWriteTime=debugStats.totalWriteTime+elapsed end end
 local listRestoreOK,listRestoreMessage=true,nil
 if BaseConfig.restoreResults then
 local restoreCallOK,restoreSuccess,restoreMessage=pcall(RestoreSearchResults)
@@ -997,12 +1049,37 @@ if BaseConfig.restoreResults then
 if listRestoreOK then message=message.."\n"..tostring(listRestoreMessage)
 else message=message.."\n"..tostring(listRestoreMessage)end end
 if not restoreOK then message=message.."\n恢复原内存范围失败:\n"..tostring(restoreErr)end
-gg.alert(message)end
+if debugEnabled then
+local report={"\n[调试信息]"}
+for _,v in ipairs(debugStats.layers)do
+report[#report+1]=string.format(
+"第%d层|目标:%d(去重:%d)|候选:%d|实际处理:%d|本层找到:%d条|生成写入:%d行\n载入目标:%s|指针搜索:%s|读取结果:%s|搜索总计:%s\n寻找基址:%s|写入:%s",
+v.level,v.targets,v.uniqueTargets,v.candidates,v.processed,v.found,v.writeRows,
+FormatDebugMs(v.loadTime),FormatDebugMs(v.pointerSearchTime),FormatDebugMs(v.resultReadTime),FormatDebugMs(v.searchTime),
+FormatDebugMs(v.findTime),FormatDebugMs(v.writeTime))end
+report[#report+1]=string.format(
+"候选总数:%d|实际处理总数:%d|找到基址总数:%d|生成写入总行数:%d",
+debugStats.totalCandidates,debugStats.totalProcessed,debugStats.totalFound,debugStats.totalWriteRows)
+report[#report+1]=string.format(
+"搜索总耗时:%s|找基址总耗时:%s",
+FormatDebugMs(debugStats.totalSearchTime),FormatDebugMs(debugStats.totalFindTime))
+report[#report+1]=string.format(
+"写入总耗时:%s(文件初始化:%s,|各层写入合计:%s,|文件关闭:%s)",
+FormatDebugMs(debugStats.totalWriteTime),FormatDebugMs(debugStats.fileInitTime),
+FormatDebugMs(debugStats.totalWriteTime-debugStats.fileInitTime-debugStats.fileCloseTime),
+FormatDebugMs(debugStats.fileCloseTime))
+report[#report+1]="整体总耗时:"..FormatDebugMs(os.clock()-totalStart)
+message=message.."\n"..table.concat(report,"\n")end
+if debugEnabled then
+local choice=gg.alert(message,"确定","复制")
+if choice==2 then
+local ok,err=pcall(gg.copyText,message,false)
+if ok then gg.alert("复制失败:\n"..tostring(err))end end else gg.alert(message)end end
     function HS17()
 local a=gg.prompt(
-{"扫描深度","最大指针偏移","文件保存位置","文件名","偏移量进制","写入完整模块路径","扫描完成后恢复搜索列表(不恢复勾选状态)","写入指针层数"},
-{BaseConfig.depth,BaseConfig.maxOffset,BaseConfig.outputPath,BaseConfig.outputName,BaseConfig.offsetFormat or 10,BaseConfig.fullModulePath,BaseConfig.restoreResults,BaseConfig.writeDepth~=false},
-{"","","path","text","","checkbox","checkbox","checkbox"})
+{"扫描深度","最大指针偏移","文件保存位置","文件名","偏移量进制","写入完整模块路径","扫描完成后恢复搜索列表(不恢复勾选状态)","写入指针层数","显示调试信息"},
+{BaseConfig.depth,BaseConfig.maxOffset,BaseConfig.outputPath,BaseConfig.outputName,BaseConfig.offsetFormat or 10,BaseConfig.fullModulePath,BaseConfig.restoreResults,BaseConfig.writeDepth~=false,BaseConfig.showTime},
+{"","","path","text","","checkbox","checkbox","checkbox","checkbox"})
 if not a then return end
 local depth=tonumber(a[1])
 if not depth or depth<1 or depth%1~=0 then gg.alert("扫描深度必须是大于0的整数")HS17()return end
@@ -1021,9 +1098,10 @@ BaseConfig.output=a[3]..a[4]
 BaseConfig.offsetFormat=radix
 BaseConfig.fullModulePath=a[6]==true
 BaseConfig.restoreResults=a[7]==true
-BaseConfig.writeDepth=a[8]==true end
+BaseConfig.writeDepth=a[8]==true
+BaseConfig.showTime=a[9]==true end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.3.0")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.3.1")end
 --==============================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
