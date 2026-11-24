@@ -10,6 +10,7 @@ local CompareConfig={file1="/sdcard",file2="/sdcard",name="对比结果",path="/
 local ListConfig={showState=false,showValues=false,maxCount=100,syncTypes="h,r,S,J,A,T,A8,D,F,E,W,B,Q,X"}--保存HS10的输入
 local FilterConfig={searchValue="",conditions="",replace=true,floatThreshold=0.001,useF=true,useE=true}--保存HS13的输入
 local BaseConfig={depth=1,maxOffset=65535,limit=1000000,offsetFormat=10,outputPath="/sdcard/",outputName="基址",output="/sdcard/基址",fullModulePath=false,restoreResults=false,writeDepth=false,showTime=false}--保存HS14的输入
+local BaseAddress={search="",switch=true,type="F"}
 ----------------------------------------------------------------------------------------------------------------
 local function FormatListValue(value)
 if value==nil then return"?"end
@@ -789,6 +790,7 @@ Config.noComma=a[7]end
     function Main4()
 SM("",{
 {"扫描",HS14},
+{"测试",HS19},
 {"设置",HS17}
 })end
     function HS14()
@@ -991,8 +993,7 @@ if not seen then seen={}nextSeen[v.address]=seen end end
 local parentCount=0
 while parentCount<99 and (module or #nextFrontier<BaseConfig.limit) and (leftDistance<=maxOffset or rightDistance<=maxOffset) do
 local parent
-if leftDistance<=rightDistance then parent=frontier[left]left=left-1 leftDistance=left>=1 and value-frontier[left].address or math.huge
-else parent=frontier[right]right=right+1 rightDistance=right<=#frontier and frontier[right].address-value or math.huge end
+if leftDistance<=rightDistance then parent=frontier[left]left=left-1 leftDistance=left>=1 and value-frontier[left].address or math.huge else parent=frontier[right]right=right+1 rightDistance=right<=#frontier and frontier[right].address-value or math.huge end
 parentCount=parentCount+1
 local offset=parent.address-value
 local offsetText=FormatBaseOffset(offset)
@@ -1014,7 +1015,7 @@ if #writeRows>0 then writeOK,writeErr=f:write(table.concat(writeRows,"\n"),"\n")
 if debugEnabled then layerStats.writeRows=#writeRows layerStats.writeTime=os.clock()-writeStart debugStats.totalWriteTime=debugStats.totalWriteTime+layerStats.writeTime end
 if not writeOK then failed="第"..level.."层基址写入失败:"..tostring(writeErr)break end
 local progress
-if debugEnabled then progress=level.."/"..depth.."层|本层目标:"..layerStats.targets.."("..layerStats.uniqueTargets.."唯一)|下一层目标:"..#frontier.."|候选:"..count.."("..debugStats.totalCandidates..")|找到:"..layerFound.."("..found..")"progress=progress.."|搜索:"..FormatDebugMs(layerStats.searchTime).."|找基址:"..FormatDebugMs(layerStats.findTime).."|写入:"..FormatDebugMs(layerStats.writeTime)else progress=level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found end
+if debugEnabled then progress=level.."/"..depth.."|本层目标:"..layerStats.targets.."("..layerStats.uniqueTargets.."唯一)|下一层目标:"..#frontier.."|候选:"..count.."("..debugStats.totalCandidates..")|找到:"..layerFound.."("..found..")"progress=progress.."|搜索:"..FormatDebugMs(layerStats.searchTime).."|找基址:"..FormatDebugMs(layerStats.findTime).."|写入:"..FormatDebugMs(layerStats.writeTime)else progress=level.."/"..depth.."层|目标:"..#frontier.."|候选:"..count.."|找到:"..found end
 gg.toast(progress,true)end
 local closeStart=debugEnabled and os.clock()or nil
 local closeOK,closeErr=f:close()activeFile=nil
@@ -1050,7 +1051,7 @@ if listRestoreOK then message=message.."\n"..tostring(listRestoreMessage)
 else message=message.."\n"..tostring(listRestoreMessage)end end
 if not restoreOK then message=message.."\n恢复原内存范围失败:\n"..tostring(restoreErr)end
 if debugEnabled then
-local report={"\n[调试信息]"}
+local report={"[调试信息]"}
 for _,v in ipairs(debugStats.layers)do
 report[#report+1]=string.format(
 "第%d层|目标:%d(去重:%d)|候选:%d|实际处理:%d|本层找到:%d条|生成写入:%d行\n载入目标:%s|指针搜索:%s|读取结果:%s|搜索总计:%s\n寻找基址:%s|写入:%s",
@@ -1073,8 +1074,95 @@ message=message.."\n"..table.concat(report,"\n")end
 if debugEnabled then
 local choice=gg.alert(message,"确定","复制")
 if choice==2 then
-local ok,err=pcall(gg.copyText,message,false)
-if ok then gg.alert("复制失败:\n"..tostring(err))end end else gg.alert(message)end end
+local ok,err=pcall(gg.copyText,message,false)end
+end gg.alert(message)end
+    function HS19()
+local a=gg.prompt(
+{"基址链(如:libglr1cs.so|3868456|21556)","替换搜索列表","替换搜索列表的数据类型"},
+{BaseAddress.search,BaseAddress.switch,BaseAddress.type},
+{"","checkbox",""})
+if not a then return end
+BaseAddress.search=a[1]
+BaseAddress.switch=a[2]==true
+BaseAddress.type=a[3]
+local function Trim(s)
+return tostring(s or""):match("^%s*(.-)%s*$")end
+local function ParseInteger(s)
+s=Trim(s)
+local sign=1
+local first=s:sub(1,1)
+if first=="-"then sign=-1 s=s:sub(2)
+elseif first=="+"then s=s:sub(2)end
+local n
+if s:match("^0[xX]")then
+local hex=s:sub(3)
+if not hex:match("^[%da-fA-F]+$")then return nil end n=tonumber(hex,16)else
+if not s:match("^%d+$")then return nil end n=tonumber(s)end
+if not n or n%1~=0 then return nil end return sign*n end
+local input=Trim(a[1])
+if input==""then gg.alert("基址链不可为空")HS19()return end
+local fields={}--解析基址链
+for part in(input.."|"):gmatch("(.-)|")do
+fields[#fields+1]=Trim(part)end
+if #fields~=3 and #fields~=4 then gg.alert("基址链格式错误\n正确格式:模块名称|模块偏移|指针偏移链")HS19()return end
+if fields[1]==""then gg.alert("模块名称不可为空")HS19()return end
+if #fields==4 and not fields[4]:match("^%d+$")then gg.alert("指针层数格式错误")HS19()return end
+local moduleName=fields[1]
+local moduleOffset=ParseInteger(fields[2])
+if moduleOffset==nil then gg.alert("模块偏移格式错误")HS19()return end
+local offsets={}--解析指针偏移链
+for part in(fields[3]..","):gmatch("(.-),")do
+part=Trim(part)
+local offset=ParseInteger(part)
+if offset==nil then gg.alert("指针偏移格式错误:\n"..part)HS19()return end
+offsets[#offsets+1]=offset end
+if #offsets==0 then gg.alert("指针偏移链不可为空")HS19()return end
+local rangeOK,ranges=pcall(gg.getRangesList)--获取模块基址
+if not rangeOK or type(ranges)~="table"then gg.alert("获取内存映射失败:\n"..tostring(ranges))return end
+local moduleMap={}
+for _,v in ipairs(ranges)do
+local name=v.name
+if type(name)~="string"or name==""or name:sub(1,1)=="["then name=v.internalName end
+if type(name)=="string"and name~=""and name:sub(1,1)~="["and name:lower():match("%.so")and type(v.start)=="number"and type(v["end"])=="number"then
+local g=moduleMap[name]
+if not g then moduleMap[name]={base=v.start}elseif v.start<g.base then g.base=v.start end end end
+local matches={}
+local hasPath=moduleName:find("/",1,true)~=nil
+for name,v in pairs(moduleMap)do
+local shortName=name:match("([^/]+)$")or name
+if (hasPath and name==moduleName)or(not hasPath and shortName==moduleName)then matches[#matches+1]={name=name,base=v.base}end end
+if #matches==0 then gg.alert("没有找到模块:\n"..moduleName)return end
+if #matches>1 then table.sort(matches,function(x,y)return x.name<y.name end)
+local names={}
+for _,v in ipairs(matches)do
+names[#names+1]=v.name end
+gg.alert("模块名称匹配到多个模块,请填写完整路径:\n"..table.concat(names,"\n"))return end
+local moduleBase=matches[1].base
+local infoOK,info=pcall(gg.getTargetInfo)--确定目标进程指针类型
+if not infoOK or type(info)~="table"or info.x64==nil then gg.alert("无法获取目标进程架构")return end
+local pointerFlag=info.x64 and gg.TYPE_QWORD or gg.TYPE_DWORD
+local currentAddress=moduleBase+moduleOffset--逐级解析指针链
+for i,offset in ipairs(offsets)do
+local readOK,values=pcall(gg.getValues,{{address=currentAddress,flags=pointerFlag}})
+if not readOK or type(values)~="table"or type(values[1])~="table"or values[1].value==nil then gg.alert("读取第"..i.."层指针失败:\n"..string.format("%X",currentAddress).."\n"..tostring(values))return end
+local pointerValue=tonumber(values[1].value)
+if pointerValue==nil or pointerValue==0 then gg.alert("第"..i.."层读取到无效指针:\n"..string.format("%X",currentAddress))return end
+currentAddress=pointerValue+offset end
+if a[2]~=true then--不勾选时只显示最终地址
+local addressText=string.format("%X",currentAddress)
+local choice=gg.alert(addressText,"确定","复制")
+if choice==2 then
+local ok,err=pcall(gg.copyText,addressText,false)end return end
+local TypeMap={D=gg.TYPE_DWORD,F=gg.TYPE_FLOAT,E=gg.TYPE_DOUBLE,W=gg.TYPE_WORD,B=gg.TYPE_BYTE,Q=gg.TYPE_QWORD,X=gg.TYPE_XOR}--勾选时解析替换数据类型
+local typeText=Trim(a[3]):upper()
+local valueFlag=TypeMap[typeText]
+if not valueFlag then gg.alert("替换数据类型错误\n支持的类型:D,F,E,W,B,Q,X")return end
+local valueOK,values=pcall(gg.getValues,{{address=currentAddress,flags=valueFlag}})--读取目标地址当前数值
+if not valueOK or type(values)~="table"or type(values[1])~="table"or values[1].value==nil then gg.alert("读取目标数值失败:\n"..tostring(values))return end
+local clearOK,clearErr=pcall(gg.clearResults)--替换搜索列表
+if not clearOK then gg.alert("清空搜索列表失败:\n"..tostring(clearErr))return end
+local loadOK,loadResult=pcall(gg.loadResults,{{address=currentAddress,value=values[1].value,flags=valueFlag}})
+if not loadOK or loadResult==false or type(loadResult)=="string"then gg.alert("替换搜索列表失败:\n"..tostring(loadResult))return end end
     function HS17()
 local a=gg.prompt(
 {"扫描深度","最大指针偏移","文件保存位置","文件名","偏移量进制","写入完整模块路径","扫描完成后恢复搜索列表(不恢复勾选状态)","写入指针层数","显示调试信息"},
@@ -1101,7 +1189,7 @@ BaseConfig.restoreResults=a[7]==true
 BaseConfig.writeDepth=a[8]==true
 BaseConfig.showTime=a[9]==true end
     function HS9()
-gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.3.1")end
+gg.alert(gg.makeRequest("https://raw.githubusercontent.com/Lua39683512/GG-Reverse-Toolkit/main/Changelog.md").content,"v1.3.2")end
 --==============================================================
 while true do--循环
 if gg.isClickedUiButton()then Main0()end gg.sleep(100)end--检测res/drawable/ic_ui_button_24dp.png是否被点击,若被点击则打开Main0(),每次检测间隔100ms
